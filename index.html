@@ -1,0 +1,4698 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QR-Rechnung</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Pure JS QR matrix for PDF (no canvas) -->
+
+<script>
+//---------------------------------------------------------------------
+//
+// QR Code Generator for JavaScript
+//
+// Copyright (c) 2009 Kazuhiko Arase
+//
+// URL: http://www.d-project.com/
+//
+// Licensed under the MIT license:
+//  http://www.opensource.org/licenses/mit-license.php
+//
+// The word 'QR Code' is registered trademark of
+// DENSO WAVE INCORPORATED
+//  http://www.denso-wave.com/qrcode/faqpatent-e.html
+//
+//---------------------------------------------------------------------
+
+var qrcode = function() {
+
+  //---------------------------------------------------------------------
+  // qrcode
+  //---------------------------------------------------------------------
+
+  /**
+   * qrcode
+   * @param typeNumber 1 to 40
+   * @param errorCorrectionLevel 'L','M','Q','H'
+   */
+  var qrcode = function(typeNumber, errorCorrectionLevel) {
+
+    var PAD0 = 0xEC;
+    var PAD1 = 0x11;
+
+    var _typeNumber = typeNumber;
+    var _errorCorrectionLevel = QRErrorCorrectionLevel[errorCorrectionLevel];
+    var _modules = null;
+    var _moduleCount = 0;
+    var _dataCache = null;
+    var _dataList = [];
+
+    var _this = {};
+
+    var makeImpl = function(test, maskPattern) {
+
+      _moduleCount = _typeNumber * 4 + 17;
+      _modules = function(moduleCount) {
+        var modules = new Array(moduleCount);
+        for (var row = 0; row < moduleCount; row += 1) {
+          modules[row] = new Array(moduleCount);
+          for (var col = 0; col < moduleCount; col += 1) {
+            modules[row][col] = null;
+          }
+        }
+        return modules;
+      }(_moduleCount);
+
+      setupPositionProbePattern(0, 0);
+      setupPositionProbePattern(_moduleCount - 7, 0);
+      setupPositionProbePattern(0, _moduleCount - 7);
+      setupPositionAdjustPattern();
+      setupTimingPattern();
+      setupTypeInfo(test, maskPattern);
+
+      if (_typeNumber >= 7) {
+        setupTypeNumber(test);
+      }
+
+      if (_dataCache == null) {
+        _dataCache = createData(_typeNumber, _errorCorrectionLevel, _dataList);
+      }
+
+      mapData(_dataCache, maskPattern);
+    };
+
+    var setupPositionProbePattern = function(row, col) {
+
+      for (var r = -1; r <= 7; r += 1) {
+
+        if (row + r <= -1 || _moduleCount <= row + r) continue;
+
+        for (var c = -1; c <= 7; c += 1) {
+
+          if (col + c <= -1 || _moduleCount <= col + c) continue;
+
+          if ( (0 <= r && r <= 6 && (c == 0 || c == 6) )
+              || (0 <= c && c <= 6 && (r == 0 || r == 6) )
+              || (2 <= r && r <= 4 && 2 <= c && c <= 4) ) {
+            _modules[row + r][col + c] = true;
+          } else {
+            _modules[row + r][col + c] = false;
+          }
+        }
+      }
+    };
+
+    var getBestMaskPattern = function() {
+
+      var minLostPoint = 0;
+      var pattern = 0;
+
+      for (var i = 0; i < 8; i += 1) {
+
+        makeImpl(true, i);
+
+        var lostPoint = QRUtil.getLostPoint(_this);
+
+        if (i == 0 || minLostPoint > lostPoint) {
+          minLostPoint = lostPoint;
+          pattern = i;
+        }
+      }
+
+      return pattern;
+    };
+
+    var setupTimingPattern = function() {
+
+      for (var r = 8; r < _moduleCount - 8; r += 1) {
+        if (_modules[r][6] != null) {
+          continue;
+        }
+        _modules[r][6] = (r % 2 == 0);
+      }
+
+      for (var c = 8; c < _moduleCount - 8; c += 1) {
+        if (_modules[6][c] != null) {
+          continue;
+        }
+        _modules[6][c] = (c % 2 == 0);
+      }
+    };
+
+    var setupPositionAdjustPattern = function() {
+
+      var pos = QRUtil.getPatternPosition(_typeNumber);
+
+      for (var i = 0; i < pos.length; i += 1) {
+
+        for (var j = 0; j < pos.length; j += 1) {
+
+          var row = pos[i];
+          var col = pos[j];
+
+          if (_modules[row][col] != null) {
+            continue;
+          }
+
+          for (var r = -2; r <= 2; r += 1) {
+
+            for (var c = -2; c <= 2; c += 1) {
+
+              if (r == -2 || r == 2 || c == -2 || c == 2
+                  || (r == 0 && c == 0) ) {
+                _modules[row + r][col + c] = true;
+              } else {
+                _modules[row + r][col + c] = false;
+              }
+            }
+          }
+        }
+      }
+    };
+
+    var setupTypeNumber = function(test) {
+
+      var bits = QRUtil.getBCHTypeNumber(_typeNumber);
+
+      for (var i = 0; i < 18; i += 1) {
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+        _modules[Math.floor(i / 3)][i % 3 + _moduleCount - 8 - 3] = mod;
+      }
+
+      for (var i = 0; i < 18; i += 1) {
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+        _modules[i % 3 + _moduleCount - 8 - 3][Math.floor(i / 3)] = mod;
+      }
+    };
+
+    var setupTypeInfo = function(test, maskPattern) {
+
+      var data = (_errorCorrectionLevel << 3) | maskPattern;
+      var bits = QRUtil.getBCHTypeInfo(data);
+
+      // vertical
+      for (var i = 0; i < 15; i += 1) {
+
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+
+        if (i < 6) {
+          _modules[i][8] = mod;
+        } else if (i < 8) {
+          _modules[i + 1][8] = mod;
+        } else {
+          _modules[_moduleCount - 15 + i][8] = mod;
+        }
+      }
+
+      // horizontal
+      for (var i = 0; i < 15; i += 1) {
+
+        var mod = (!test && ( (bits >> i) & 1) == 1);
+
+        if (i < 8) {
+          _modules[8][_moduleCount - i - 1] = mod;
+        } else if (i < 9) {
+          _modules[8][15 - i - 1 + 1] = mod;
+        } else {
+          _modules[8][15 - i - 1] = mod;
+        }
+      }
+
+      // fixed module
+      _modules[_moduleCount - 8][8] = (!test);
+    };
+
+    var mapData = function(data, maskPattern) {
+
+      var inc = -1;
+      var row = _moduleCount - 1;
+      var bitIndex = 7;
+      var byteIndex = 0;
+      var maskFunc = QRUtil.getMaskFunction(maskPattern);
+
+      for (var col = _moduleCount - 1; col > 0; col -= 2) {
+
+        if (col == 6) col -= 1;
+
+        while (true) {
+
+          for (var c = 0; c < 2; c += 1) {
+
+            if (_modules[row][col - c] == null) {
+
+              var dark = false;
+
+              if (byteIndex < data.length) {
+                dark = ( ( (data[byteIndex] >>> bitIndex) & 1) == 1);
+              }
+
+              var mask = maskFunc(row, col - c);
+
+              if (mask) {
+                dark = !dark;
+              }
+
+              _modules[row][col - c] = dark;
+              bitIndex -= 1;
+
+              if (bitIndex == -1) {
+                byteIndex += 1;
+                bitIndex = 7;
+              }
+            }
+          }
+
+          row += inc;
+
+          if (row < 0 || _moduleCount <= row) {
+            row -= inc;
+            inc = -inc;
+            break;
+          }
+        }
+      }
+    };
+
+    var createBytes = function(buffer, rsBlocks) {
+
+      var offset = 0;
+
+      var maxDcCount = 0;
+      var maxEcCount = 0;
+
+      var dcdata = new Array(rsBlocks.length);
+      var ecdata = new Array(rsBlocks.length);
+
+      for (var r = 0; r < rsBlocks.length; r += 1) {
+
+        var dcCount = rsBlocks[r].dataCount;
+        var ecCount = rsBlocks[r].totalCount - dcCount;
+
+        maxDcCount = Math.max(maxDcCount, dcCount);
+        maxEcCount = Math.max(maxEcCount, ecCount);
+
+        dcdata[r] = new Array(dcCount);
+
+        for (var i = 0; i < dcdata[r].length; i += 1) {
+          dcdata[r][i] = 0xff & buffer.getBuffer()[i + offset];
+        }
+        offset += dcCount;
+
+        var rsPoly = QRUtil.getErrorCorrectPolynomial(ecCount);
+        var rawPoly = qrPolynomial(dcdata[r], rsPoly.getLength() - 1);
+
+        var modPoly = rawPoly.mod(rsPoly);
+        ecdata[r] = new Array(rsPoly.getLength() - 1);
+        for (var i = 0; i < ecdata[r].length; i += 1) {
+          var modIndex = i + modPoly.getLength() - ecdata[r].length;
+          ecdata[r][i] = (modIndex >= 0)? modPoly.getAt(modIndex) : 0;
+        }
+      }
+
+      var totalCodeCount = 0;
+      for (var i = 0; i < rsBlocks.length; i += 1) {
+        totalCodeCount += rsBlocks[i].totalCount;
+      }
+
+      var data = new Array(totalCodeCount);
+      var index = 0;
+
+      for (var i = 0; i < maxDcCount; i += 1) {
+        for (var r = 0; r < rsBlocks.length; r += 1) {
+          if (i < dcdata[r].length) {
+            data[index] = dcdata[r][i];
+            index += 1;
+          }
+        }
+      }
+
+      for (var i = 0; i < maxEcCount; i += 1) {
+        for (var r = 0; r < rsBlocks.length; r += 1) {
+          if (i < ecdata[r].length) {
+            data[index] = ecdata[r][i];
+            index += 1;
+          }
+        }
+      }
+
+      return data;
+    };
+
+    var createData = function(typeNumber, errorCorrectionLevel, dataList) {
+
+      var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, errorCorrectionLevel);
+
+      var buffer = qrBitBuffer();
+
+      for (var i = 0; i < dataList.length; i += 1) {
+        var data = dataList[i];
+        buffer.put(data.getMode(), 4);
+        buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber) );
+        data.write(buffer);
+      }
+
+      // calc num max data.
+      var totalDataCount = 0;
+      for (var i = 0; i < rsBlocks.length; i += 1) {
+        totalDataCount += rsBlocks[i].dataCount;
+      }
+
+      if (buffer.getLengthInBits() > totalDataCount * 8) {
+        throw 'code length overflow. ('
+          + buffer.getLengthInBits()
+          + '>'
+          + totalDataCount * 8
+          + ')';
+      }
+
+      // end code
+      if (buffer.getLengthInBits() + 4 <= totalDataCount * 8) {
+        buffer.put(0, 4);
+      }
+
+      // padding
+      while (buffer.getLengthInBits() % 8 != 0) {
+        buffer.putBit(false);
+      }
+
+      // padding
+      while (true) {
+
+        if (buffer.getLengthInBits() >= totalDataCount * 8) {
+          break;
+        }
+        buffer.put(PAD0, 8);
+
+        if (buffer.getLengthInBits() >= totalDataCount * 8) {
+          break;
+        }
+        buffer.put(PAD1, 8);
+      }
+
+      return createBytes(buffer, rsBlocks);
+    };
+
+    _this.addData = function(data, mode) {
+
+      mode = mode || 'Byte';
+
+      var newData = null;
+
+      switch(mode) {
+      case 'Numeric' :
+        newData = qrNumber(data);
+        break;
+      case 'Alphanumeric' :
+        newData = qrAlphaNum(data);
+        break;
+      case 'Byte' :
+        newData = qr8BitByte(data);
+        break;
+      case 'Kanji' :
+        newData = qrKanji(data);
+        break;
+      default :
+        throw 'mode:' + mode;
+      }
+
+      _dataList.push(newData);
+      _dataCache = null;
+    };
+
+    _this.isDark = function(row, col) {
+      if (row < 0 || _moduleCount <= row || col < 0 || _moduleCount <= col) {
+        throw row + ',' + col;
+      }
+      return _modules[row][col];
+    };
+
+    _this.getModuleCount = function() {
+      return _moduleCount;
+    };
+
+    _this.make = function() {
+      if (_typeNumber < 1) {
+        var typeNumber = 1;
+
+        for (; typeNumber < 40; typeNumber++) {
+          var rsBlocks = QRRSBlock.getRSBlocks(typeNumber, _errorCorrectionLevel);
+          var buffer = qrBitBuffer();
+
+          for (var i = 0; i < _dataList.length; i++) {
+            var data = _dataList[i];
+            buffer.put(data.getMode(), 4);
+            buffer.put(data.getLength(), QRUtil.getLengthInBits(data.getMode(), typeNumber) );
+            data.write(buffer);
+          }
+
+          var totalDataCount = 0;
+          for (var i = 0; i < rsBlocks.length; i++) {
+            totalDataCount += rsBlocks[i].dataCount;
+          }
+
+          if (buffer.getLengthInBits() <= totalDataCount * 8) {
+            break;
+          }
+        }
+
+        _typeNumber = typeNumber;
+      }
+
+      makeImpl(false, getBestMaskPattern() );
+    };
+
+    _this.createTableTag = function(cellSize, margin) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var qrHtml = '';
+
+      qrHtml += '<table style="';
+      qrHtml += ' border-width: 0px; border-style: none;';
+      qrHtml += ' border-collapse: collapse;';
+      qrHtml += ' padding: 0px; margin: ' + margin + 'px;';
+      qrHtml += '">';
+      qrHtml += '<tbody>';
+
+      for (var r = 0; r < _this.getModuleCount(); r += 1) {
+
+        qrHtml += '<tr>';
+
+        for (var c = 0; c < _this.getModuleCount(); c += 1) {
+          qrHtml += '<td style="';
+          qrHtml += ' border-width: 0px; border-style: none;';
+          qrHtml += ' border-collapse: collapse;';
+          qrHtml += ' padding: 0px; margin: 0px;';
+          qrHtml += ' width: ' + cellSize + 'px;';
+          qrHtml += ' height: ' + cellSize + 'px;';
+          qrHtml += ' background-color: ';
+          qrHtml += _this.isDark(r, c)? '#000000' : '#ffffff';
+          qrHtml += ';';
+          qrHtml += '"/>';
+        }
+
+        qrHtml += '</tr>';
+      }
+
+      qrHtml += '</tbody>';
+      qrHtml += '</table>';
+
+      return qrHtml;
+    };
+
+    _this.createSvgTag = function(cellSize, margin, alt, title) {
+
+      var opts = {};
+      if (typeof arguments[0] == 'object') {
+        // Called by options.
+        opts = arguments[0];
+        // overwrite cellSize and margin.
+        cellSize = opts.cellSize;
+        margin = opts.margin;
+        alt = opts.alt;
+        title = opts.title;
+      }
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      // Compose alt property surrogate
+      alt = (typeof alt === 'string') ? {text: alt} : alt || {};
+      alt.text = alt.text || null;
+      alt.id = (alt.text) ? alt.id || 'qrcode-description' : null;
+
+      // Compose title property surrogate
+      title = (typeof title === 'string') ? {text: title} : title || {};
+      title.text = title.text || null;
+      title.id = (title.text) ? title.id || 'qrcode-title' : null;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var c, mc, r, mr, qrSvg='', rect;
+
+      rect = 'l' + cellSize + ',0 0,' + cellSize +
+        ' -' + cellSize + ',0 0,-' + cellSize + 'z ';
+
+      qrSvg += '<svg version="1.1" xmlns="http://www.w3.org/2000/svg"';
+      qrSvg += !opts.scalable ? ' width="' + size + 'px" height="' + size + 'px"' : '';
+      qrSvg += ' viewBox="0 0 ' + size + ' ' + size + '" ';
+      qrSvg += ' preserveAspectRatio="xMinYMin meet"';
+      qrSvg += (title.text || alt.text) ? ' role="img" aria-labelledby="' +
+          escapeXml([title.id, alt.id].join(' ').trim() ) + '"' : '';
+      qrSvg += '>';
+      qrSvg += (title.text) ? '<title id="' + escapeXml(title.id) + '">' +
+          escapeXml(title.text) + '</title>' : '';
+      qrSvg += (alt.text) ? '<description id="' + escapeXml(alt.id) + '">' +
+          escapeXml(alt.text) + '</description>' : '';
+      qrSvg += '<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>';
+      qrSvg += '<path d="';
+
+      for (r = 0; r < _this.getModuleCount(); r += 1) {
+        mr = r * cellSize + margin;
+        for (c = 0; c < _this.getModuleCount(); c += 1) {
+          if (_this.isDark(r, c) ) {
+            mc = c*cellSize+margin;
+            qrSvg += 'M' + mc + ',' + mr + rect;
+          }
+        }
+      }
+
+      qrSvg += '" stroke="transparent" fill="black"/>';
+      qrSvg += '</svg>';
+
+      return qrSvg;
+    };
+
+    _this.createDataURL = function(cellSize, margin) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      return createDataURL(size, size, function(x, y) {
+        if (min <= x && x < max && min <= y && y < max) {
+          var c = Math.floor( (x - min) / cellSize);
+          var r = Math.floor( (y - min) / cellSize);
+          return _this.isDark(r, c)? 0 : 1;
+        } else {
+          return 1;
+        }
+      } );
+    };
+
+    _this.createImgTag = function(cellSize, margin, alt) {
+
+      cellSize = cellSize || 2;
+      margin = (typeof margin == 'undefined')? cellSize * 4 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+
+      var img = '';
+      img += '<img';
+      img += '\u0020src="';
+      img += _this.createDataURL(cellSize, margin);
+      img += '"';
+      img += '\u0020width="';
+      img += size;
+      img += '"';
+      img += '\u0020height="';
+      img += size;
+      img += '"';
+      if (alt) {
+        img += '\u0020alt="';
+        img += escapeXml(alt);
+        img += '"';
+      }
+      img += '/>';
+
+      return img;
+    };
+
+    var escapeXml = function(s) {
+      var escaped = '';
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charAt(i);
+        switch(c) {
+        case '<': escaped += '&lt;'; break;
+        case '>': escaped += '&gt;'; break;
+        case '&': escaped += '&amp;'; break;
+        case '"': escaped += '&quot;'; break;
+        default : escaped += c; break;
+        }
+      }
+      return escaped;
+    };
+
+    var _createHalfASCII = function(margin) {
+      var cellSize = 1;
+      margin = (typeof margin == 'undefined')? cellSize * 2 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      var y, x, r1, r2, p;
+
+      var blocks = {
+        '██': '█',
+        '█ ': '▀',
+        ' █': '▄',
+        '  ': ' '
+      };
+
+      var blocksLastLineNoMargin = {
+        '██': '▀',
+        '█ ': '▀',
+        ' █': ' ',
+        '  ': ' '
+      };
+
+      var ascii = '';
+      for (y = 0; y < size; y += 2) {
+        r1 = Math.floor((y - min) / cellSize);
+        r2 = Math.floor((y + 1 - min) / cellSize);
+        for (x = 0; x < size; x += 1) {
+          p = '█';
+
+          if (min <= x && x < max && min <= y && y < max && _this.isDark(r1, Math.floor((x - min) / cellSize))) {
+            p = ' ';
+          }
+
+          if (min <= x && x < max && min <= y+1 && y+1 < max && _this.isDark(r2, Math.floor((x - min) / cellSize))) {
+            p += ' ';
+          }
+          else {
+            p += '█';
+          }
+
+          // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+          ascii += (margin < 1 && y+1 >= max) ? blocksLastLineNoMargin[p] : blocks[p];
+        }
+
+        ascii += '\n';
+      }
+
+      if (size % 2 && margin > 0) {
+        return ascii.substring(0, ascii.length - size - 1) + Array(size+1).join('▀');
+      }
+
+      return ascii.substring(0, ascii.length-1);
+    };
+
+    _this.createASCII = function(cellSize, margin) {
+      cellSize = cellSize || 1;
+
+      if (cellSize < 2) {
+        return _createHalfASCII(margin);
+      }
+
+      cellSize -= 1;
+      margin = (typeof margin == 'undefined')? cellSize * 2 : margin;
+
+      var size = _this.getModuleCount() * cellSize + margin * 2;
+      var min = margin;
+      var max = size - margin;
+
+      var y, x, r, p;
+
+      var white = Array(cellSize+1).join('██');
+      var black = Array(cellSize+1).join('  ');
+
+      var ascii = '';
+      var line = '';
+      for (y = 0; y < size; y += 1) {
+        r = Math.floor( (y - min) / cellSize);
+        line = '';
+        for (x = 0; x < size; x += 1) {
+          p = 1;
+
+          if (min <= x && x < max && min <= y && y < max && _this.isDark(r, Math.floor((x - min) / cellSize))) {
+            p = 0;
+          }
+
+          // Output 2 characters per pixel, to create full square. 1 character per pixels gives only half width of square.
+          line += p ? white : black;
+        }
+
+        for (r = 0; r < cellSize; r += 1) {
+          ascii += line + '\n';
+        }
+      }
+
+      return ascii.substring(0, ascii.length-1);
+    };
+
+    _this.renderTo2dContext = function(context, cellSize) {
+      cellSize = cellSize || 2;
+      var length = _this.getModuleCount();
+      for (var row = 0; row < length; row++) {
+        for (var col = 0; col < length; col++) {
+          context.fillStyle = _this.isDark(row, col) ? 'black' : 'white';
+          context.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+        }
+      }
+    }
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrcode.stringToBytes
+  //---------------------------------------------------------------------
+
+  qrcode.stringToBytesFuncs = {
+    'default' : function(s) {
+      var bytes = [];
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charCodeAt(i);
+        bytes.push(c & 0xff);
+      }
+      return bytes;
+    }
+  };
+
+  qrcode.stringToBytes = qrcode.stringToBytesFuncs['default'];
+
+  //---------------------------------------------------------------------
+  // qrcode.createStringToBytes
+  //---------------------------------------------------------------------
+
+  /**
+   * @param unicodeData base64 string of byte array.
+   * [16bit Unicode],[16bit Bytes], ...
+   * @param numChars
+   */
+  qrcode.createStringToBytes = function(unicodeData, numChars) {
+
+    // create conversion map.
+
+    var unicodeMap = function() {
+
+      var bin = base64DecodeInputStream(unicodeData);
+      var read = function() {
+        var b = bin.read();
+        if (b == -1) throw 'eof';
+        return b;
+      };
+
+      var count = 0;
+      var unicodeMap = {};
+      while (true) {
+        var b0 = bin.read();
+        if (b0 == -1) break;
+        var b1 = read();
+        var b2 = read();
+        var b3 = read();
+        var k = String.fromCharCode( (b0 << 8) | b1);
+        var v = (b2 << 8) | b3;
+        unicodeMap[k] = v;
+        count += 1;
+      }
+      if (count != numChars) {
+        throw count + ' != ' + numChars;
+      }
+
+      return unicodeMap;
+    }();
+
+    var unknownChar = '?'.charCodeAt(0);
+
+    return function(s) {
+      var bytes = [];
+      for (var i = 0; i < s.length; i += 1) {
+        var c = s.charCodeAt(i);
+        if (c < 128) {
+          bytes.push(c);
+        } else {
+          var b = unicodeMap[s.charAt(i)];
+          if (typeof b == 'number') {
+            if ( (b & 0xff) == b) {
+              // 1byte
+              bytes.push(b);
+            } else {
+              // 2bytes
+              bytes.push(b >>> 8);
+              bytes.push(b & 0xff);
+            }
+          } else {
+            bytes.push(unknownChar);
+          }
+        }
+      }
+      return bytes;
+    };
+  };
+
+  //---------------------------------------------------------------------
+  // QRMode
+  //---------------------------------------------------------------------
+
+  var QRMode = {
+    MODE_NUMBER :    1 << 0,
+    MODE_ALPHA_NUM : 1 << 1,
+    MODE_8BIT_BYTE : 1 << 2,
+    MODE_KANJI :     1 << 3
+  };
+
+  //---------------------------------------------------------------------
+  // QRErrorCorrectionLevel
+  //---------------------------------------------------------------------
+
+  var QRErrorCorrectionLevel = {
+    L : 1,
+    M : 0,
+    Q : 3,
+    H : 2
+  };
+
+  //---------------------------------------------------------------------
+  // QRMaskPattern
+  //---------------------------------------------------------------------
+
+  var QRMaskPattern = {
+    PATTERN000 : 0,
+    PATTERN001 : 1,
+    PATTERN010 : 2,
+    PATTERN011 : 3,
+    PATTERN100 : 4,
+    PATTERN101 : 5,
+    PATTERN110 : 6,
+    PATTERN111 : 7
+  };
+
+  //---------------------------------------------------------------------
+  // QRUtil
+  //---------------------------------------------------------------------
+
+  var QRUtil = function() {
+
+    var PATTERN_POSITION_TABLE = [
+      [],
+      [6, 18],
+      [6, 22],
+      [6, 26],
+      [6, 30],
+      [6, 34],
+      [6, 22, 38],
+      [6, 24, 42],
+      [6, 26, 46],
+      [6, 28, 50],
+      [6, 30, 54],
+      [6, 32, 58],
+      [6, 34, 62],
+      [6, 26, 46, 66],
+      [6, 26, 48, 70],
+      [6, 26, 50, 74],
+      [6, 30, 54, 78],
+      [6, 30, 56, 82],
+      [6, 30, 58, 86],
+      [6, 34, 62, 90],
+      [6, 28, 50, 72, 94],
+      [6, 26, 50, 74, 98],
+      [6, 30, 54, 78, 102],
+      [6, 28, 54, 80, 106],
+      [6, 32, 58, 84, 110],
+      [6, 30, 58, 86, 114],
+      [6, 34, 62, 90, 118],
+      [6, 26, 50, 74, 98, 122],
+      [6, 30, 54, 78, 102, 126],
+      [6, 26, 52, 78, 104, 130],
+      [6, 30, 56, 82, 108, 134],
+      [6, 34, 60, 86, 112, 138],
+      [6, 30, 58, 86, 114, 142],
+      [6, 34, 62, 90, 118, 146],
+      [6, 30, 54, 78, 102, 126, 150],
+      [6, 24, 50, 76, 102, 128, 154],
+      [6, 28, 54, 80, 106, 132, 158],
+      [6, 32, 58, 84, 110, 136, 162],
+      [6, 26, 54, 82, 110, 138, 166],
+      [6, 30, 58, 86, 114, 142, 170]
+    ];
+    var G15 = (1 << 10) | (1 << 8) | (1 << 5) | (1 << 4) | (1 << 2) | (1 << 1) | (1 << 0);
+    var G18 = (1 << 12) | (1 << 11) | (1 << 10) | (1 << 9) | (1 << 8) | (1 << 5) | (1 << 2) | (1 << 0);
+    var G15_MASK = (1 << 14) | (1 << 12) | (1 << 10) | (1 << 4) | (1 << 1);
+
+    var _this = {};
+
+    var getBCHDigit = function(data) {
+      var digit = 0;
+      while (data != 0) {
+        digit += 1;
+        data >>>= 1;
+      }
+      return digit;
+    };
+
+    _this.getBCHTypeInfo = function(data) {
+      var d = data << 10;
+      while (getBCHDigit(d) - getBCHDigit(G15) >= 0) {
+        d ^= (G15 << (getBCHDigit(d) - getBCHDigit(G15) ) );
+      }
+      return ( (data << 10) | d) ^ G15_MASK;
+    };
+
+    _this.getBCHTypeNumber = function(data) {
+      var d = data << 12;
+      while (getBCHDigit(d) - getBCHDigit(G18) >= 0) {
+        d ^= (G18 << (getBCHDigit(d) - getBCHDigit(G18) ) );
+      }
+      return (data << 12) | d;
+    };
+
+    _this.getPatternPosition = function(typeNumber) {
+      return PATTERN_POSITION_TABLE[typeNumber - 1];
+    };
+
+    _this.getMaskFunction = function(maskPattern) {
+
+      switch (maskPattern) {
+
+      case QRMaskPattern.PATTERN000 :
+        return function(i, j) { return (i + j) % 2 == 0; };
+      case QRMaskPattern.PATTERN001 :
+        return function(i, j) { return i % 2 == 0; };
+      case QRMaskPattern.PATTERN010 :
+        return function(i, j) { return j % 3 == 0; };
+      case QRMaskPattern.PATTERN011 :
+        return function(i, j) { return (i + j) % 3 == 0; };
+      case QRMaskPattern.PATTERN100 :
+        return function(i, j) { return (Math.floor(i / 2) + Math.floor(j / 3) ) % 2 == 0; };
+      case QRMaskPattern.PATTERN101 :
+        return function(i, j) { return (i * j) % 2 + (i * j) % 3 == 0; };
+      case QRMaskPattern.PATTERN110 :
+        return function(i, j) { return ( (i * j) % 2 + (i * j) % 3) % 2 == 0; };
+      case QRMaskPattern.PATTERN111 :
+        return function(i, j) { return ( (i * j) % 3 + (i + j) % 2) % 2 == 0; };
+
+      default :
+        throw 'bad maskPattern:' + maskPattern;
+      }
+    };
+
+    _this.getErrorCorrectPolynomial = function(errorCorrectLength) {
+      var a = qrPolynomial([1], 0);
+      for (var i = 0; i < errorCorrectLength; i += 1) {
+        a = a.multiply(qrPolynomial([1, QRMath.gexp(i)], 0) );
+      }
+      return a;
+    };
+
+    _this.getLengthInBits = function(mode, type) {
+
+      if (1 <= type && type < 10) {
+
+        // 1 - 9
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 10;
+        case QRMode.MODE_ALPHA_NUM : return 9;
+        case QRMode.MODE_8BIT_BYTE : return 8;
+        case QRMode.MODE_KANJI     : return 8;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else if (type < 27) {
+
+        // 10 - 26
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 12;
+        case QRMode.MODE_ALPHA_NUM : return 11;
+        case QRMode.MODE_8BIT_BYTE : return 16;
+        case QRMode.MODE_KANJI     : return 10;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else if (type < 41) {
+
+        // 27 - 40
+
+        switch(mode) {
+        case QRMode.MODE_NUMBER    : return 14;
+        case QRMode.MODE_ALPHA_NUM : return 13;
+        case QRMode.MODE_8BIT_BYTE : return 16;
+        case QRMode.MODE_KANJI     : return 12;
+        default :
+          throw 'mode:' + mode;
+        }
+
+      } else {
+        throw 'type:' + type;
+      }
+    };
+
+    _this.getLostPoint = function(qrcode) {
+
+      var moduleCount = qrcode.getModuleCount();
+
+      var lostPoint = 0;
+
+      // LEVEL1
+
+      for (var row = 0; row < moduleCount; row += 1) {
+        for (var col = 0; col < moduleCount; col += 1) {
+
+          var sameCount = 0;
+          var dark = qrcode.isDark(row, col);
+
+          for (var r = -1; r <= 1; r += 1) {
+
+            if (row + r < 0 || moduleCount <= row + r) {
+              continue;
+            }
+
+            for (var c = -1; c <= 1; c += 1) {
+
+              if (col + c < 0 || moduleCount <= col + c) {
+                continue;
+              }
+
+              if (r == 0 && c == 0) {
+                continue;
+              }
+
+              if (dark == qrcode.isDark(row + r, col + c) ) {
+                sameCount += 1;
+              }
+            }
+          }
+
+          if (sameCount > 5) {
+            lostPoint += (3 + sameCount - 5);
+          }
+        }
+      };
+
+      // LEVEL2
+
+      for (var row = 0; row < moduleCount - 1; row += 1) {
+        for (var col = 0; col < moduleCount - 1; col += 1) {
+          var count = 0;
+          if (qrcode.isDark(row, col) ) count += 1;
+          if (qrcode.isDark(row + 1, col) ) count += 1;
+          if (qrcode.isDark(row, col + 1) ) count += 1;
+          if (qrcode.isDark(row + 1, col + 1) ) count += 1;
+          if (count == 0 || count == 4) {
+            lostPoint += 3;
+          }
+        }
+      }
+
+      // LEVEL3
+
+      for (var row = 0; row < moduleCount; row += 1) {
+        for (var col = 0; col < moduleCount - 6; col += 1) {
+          if (qrcode.isDark(row, col)
+              && !qrcode.isDark(row, col + 1)
+              &&  qrcode.isDark(row, col + 2)
+              &&  qrcode.isDark(row, col + 3)
+              &&  qrcode.isDark(row, col + 4)
+              && !qrcode.isDark(row, col + 5)
+              &&  qrcode.isDark(row, col + 6) ) {
+            lostPoint += 40;
+          }
+        }
+      }
+
+      for (var col = 0; col < moduleCount; col += 1) {
+        for (var row = 0; row < moduleCount - 6; row += 1) {
+          if (qrcode.isDark(row, col)
+              && !qrcode.isDark(row + 1, col)
+              &&  qrcode.isDark(row + 2, col)
+              &&  qrcode.isDark(row + 3, col)
+              &&  qrcode.isDark(row + 4, col)
+              && !qrcode.isDark(row + 5, col)
+              &&  qrcode.isDark(row + 6, col) ) {
+            lostPoint += 40;
+          }
+        }
+      }
+
+      // LEVEL4
+
+      var darkCount = 0;
+
+      for (var col = 0; col < moduleCount; col += 1) {
+        for (var row = 0; row < moduleCount; row += 1) {
+          if (qrcode.isDark(row, col) ) {
+            darkCount += 1;
+          }
+        }
+      }
+
+      var ratio = Math.abs(100 * darkCount / moduleCount / moduleCount - 50) / 5;
+      lostPoint += ratio * 10;
+
+      return lostPoint;
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // QRMath
+  //---------------------------------------------------------------------
+
+  var QRMath = function() {
+
+    var EXP_TABLE = new Array(256);
+    var LOG_TABLE = new Array(256);
+
+    // initialize tables
+    for (var i = 0; i < 8; i += 1) {
+      EXP_TABLE[i] = 1 << i;
+    }
+    for (var i = 8; i < 256; i += 1) {
+      EXP_TABLE[i] = EXP_TABLE[i - 4]
+        ^ EXP_TABLE[i - 5]
+        ^ EXP_TABLE[i - 6]
+        ^ EXP_TABLE[i - 8];
+    }
+    for (var i = 0; i < 255; i += 1) {
+      LOG_TABLE[EXP_TABLE[i] ] = i;
+    }
+
+    var _this = {};
+
+    _this.glog = function(n) {
+
+      if (n < 1) {
+        throw 'glog(' + n + ')';
+      }
+
+      return LOG_TABLE[n];
+    };
+
+    _this.gexp = function(n) {
+
+      while (n < 0) {
+        n += 255;
+      }
+
+      while (n >= 256) {
+        n -= 255;
+      }
+
+      return EXP_TABLE[n];
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // qrPolynomial
+  //---------------------------------------------------------------------
+
+  function qrPolynomial(num, shift) {
+
+    if (typeof num.length == 'undefined') {
+      throw num.length + '/' + shift;
+    }
+
+    var _num = function() {
+      var offset = 0;
+      while (offset < num.length && num[offset] == 0) {
+        offset += 1;
+      }
+      var _num = new Array(num.length - offset + shift);
+      for (var i = 0; i < num.length - offset; i += 1) {
+        _num[i] = num[i + offset];
+      }
+      return _num;
+    }();
+
+    var _this = {};
+
+    _this.getAt = function(index) {
+      return _num[index];
+    };
+
+    _this.getLength = function() {
+      return _num.length;
+    };
+
+    _this.multiply = function(e) {
+
+      var num = new Array(_this.getLength() + e.getLength() - 1);
+
+      for (var i = 0; i < _this.getLength(); i += 1) {
+        for (var j = 0; j < e.getLength(); j += 1) {
+          num[i + j] ^= QRMath.gexp(QRMath.glog(_this.getAt(i) ) + QRMath.glog(e.getAt(j) ) );
+        }
+      }
+
+      return qrPolynomial(num, 0);
+    };
+
+    _this.mod = function(e) {
+
+      if (_this.getLength() - e.getLength() < 0) {
+        return _this;
+      }
+
+      var ratio = QRMath.glog(_this.getAt(0) ) - QRMath.glog(e.getAt(0) );
+
+      var num = new Array(_this.getLength() );
+      for (var i = 0; i < _this.getLength(); i += 1) {
+        num[i] = _this.getAt(i);
+      }
+
+      for (var i = 0; i < e.getLength(); i += 1) {
+        num[i] ^= QRMath.gexp(QRMath.glog(e.getAt(i) ) + ratio);
+      }
+
+      // recursive call
+      return qrPolynomial(num, 0).mod(e);
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // QRRSBlock
+  //---------------------------------------------------------------------
+
+  var QRRSBlock = function() {
+
+    var RS_BLOCK_TABLE = [
+
+      // L
+      // M
+      // Q
+      // H
+
+      // 1
+      [1, 26, 19],
+      [1, 26, 16],
+      [1, 26, 13],
+      [1, 26, 9],
+
+      // 2
+      [1, 44, 34],
+      [1, 44, 28],
+      [1, 44, 22],
+      [1, 44, 16],
+
+      // 3
+      [1, 70, 55],
+      [1, 70, 44],
+      [2, 35, 17],
+      [2, 35, 13],
+
+      // 4
+      [1, 100, 80],
+      [2, 50, 32],
+      [2, 50, 24],
+      [4, 25, 9],
+
+      // 5
+      [1, 134, 108],
+      [2, 67, 43],
+      [2, 33, 15, 2, 34, 16],
+      [2, 33, 11, 2, 34, 12],
+
+      // 6
+      [2, 86, 68],
+      [4, 43, 27],
+      [4, 43, 19],
+      [4, 43, 15],
+
+      // 7
+      [2, 98, 78],
+      [4, 49, 31],
+      [2, 32, 14, 4, 33, 15],
+      [4, 39, 13, 1, 40, 14],
+
+      // 8
+      [2, 121, 97],
+      [2, 60, 38, 2, 61, 39],
+      [4, 40, 18, 2, 41, 19],
+      [4, 40, 14, 2, 41, 15],
+
+      // 9
+      [2, 146, 116],
+      [3, 58, 36, 2, 59, 37],
+      [4, 36, 16, 4, 37, 17],
+      [4, 36, 12, 4, 37, 13],
+
+      // 10
+      [2, 86, 68, 2, 87, 69],
+      [4, 69, 43, 1, 70, 44],
+      [6, 43, 19, 2, 44, 20],
+      [6, 43, 15, 2, 44, 16],
+
+      // 11
+      [4, 101, 81],
+      [1, 80, 50, 4, 81, 51],
+      [4, 50, 22, 4, 51, 23],
+      [3, 36, 12, 8, 37, 13],
+
+      // 12
+      [2, 116, 92, 2, 117, 93],
+      [6, 58, 36, 2, 59, 37],
+      [4, 46, 20, 6, 47, 21],
+      [7, 42, 14, 4, 43, 15],
+
+      // 13
+      [4, 133, 107],
+      [8, 59, 37, 1, 60, 38],
+      [8, 44, 20, 4, 45, 21],
+      [12, 33, 11, 4, 34, 12],
+
+      // 14
+      [3, 145, 115, 1, 146, 116],
+      [4, 64, 40, 5, 65, 41],
+      [11, 36, 16, 5, 37, 17],
+      [11, 36, 12, 5, 37, 13],
+
+      // 15
+      [5, 109, 87, 1, 110, 88],
+      [5, 65, 41, 5, 66, 42],
+      [5, 54, 24, 7, 55, 25],
+      [11, 36, 12, 7, 37, 13],
+
+      // 16
+      [5, 122, 98, 1, 123, 99],
+      [7, 73, 45, 3, 74, 46],
+      [15, 43, 19, 2, 44, 20],
+      [3, 45, 15, 13, 46, 16],
+
+      // 17
+      [1, 135, 107, 5, 136, 108],
+      [10, 74, 46, 1, 75, 47],
+      [1, 50, 22, 15, 51, 23],
+      [2, 42, 14, 17, 43, 15],
+
+      // 18
+      [5, 150, 120, 1, 151, 121],
+      [9, 69, 43, 4, 70, 44],
+      [17, 50, 22, 1, 51, 23],
+      [2, 42, 14, 19, 43, 15],
+
+      // 19
+      [3, 141, 113, 4, 142, 114],
+      [3, 70, 44, 11, 71, 45],
+      [17, 47, 21, 4, 48, 22],
+      [9, 39, 13, 16, 40, 14],
+
+      // 20
+      [3, 135, 107, 5, 136, 108],
+      [3, 67, 41, 13, 68, 42],
+      [15, 54, 24, 5, 55, 25],
+      [15, 43, 15, 10, 44, 16],
+
+      // 21
+      [4, 144, 116, 4, 145, 117],
+      [17, 68, 42],
+      [17, 50, 22, 6, 51, 23],
+      [19, 46, 16, 6, 47, 17],
+
+      // 22
+      [2, 139, 111, 7, 140, 112],
+      [17, 74, 46],
+      [7, 54, 24, 16, 55, 25],
+      [34, 37, 13],
+
+      // 23
+      [4, 151, 121, 5, 152, 122],
+      [4, 75, 47, 14, 76, 48],
+      [11, 54, 24, 14, 55, 25],
+      [16, 45, 15, 14, 46, 16],
+
+      // 24
+      [6, 147, 117, 4, 148, 118],
+      [6, 73, 45, 14, 74, 46],
+      [11, 54, 24, 16, 55, 25],
+      [30, 46, 16, 2, 47, 17],
+
+      // 25
+      [8, 132, 106, 4, 133, 107],
+      [8, 75, 47, 13, 76, 48],
+      [7, 54, 24, 22, 55, 25],
+      [22, 45, 15, 13, 46, 16],
+
+      // 26
+      [10, 142, 114, 2, 143, 115],
+      [19, 74, 46, 4, 75, 47],
+      [28, 50, 22, 6, 51, 23],
+      [33, 46, 16, 4, 47, 17],
+
+      // 27
+      [8, 152, 122, 4, 153, 123],
+      [22, 73, 45, 3, 74, 46],
+      [8, 53, 23, 26, 54, 24],
+      [12, 45, 15, 28, 46, 16],
+
+      // 28
+      [3, 147, 117, 10, 148, 118],
+      [3, 73, 45, 23, 74, 46],
+      [4, 54, 24, 31, 55, 25],
+      [11, 45, 15, 31, 46, 16],
+
+      // 29
+      [7, 146, 116, 7, 147, 117],
+      [21, 73, 45, 7, 74, 46],
+      [1, 53, 23, 37, 54, 24],
+      [19, 45, 15, 26, 46, 16],
+
+      // 30
+      [5, 145, 115, 10, 146, 116],
+      [19, 75, 47, 10, 76, 48],
+      [15, 54, 24, 25, 55, 25],
+      [23, 45, 15, 25, 46, 16],
+
+      // 31
+      [13, 145, 115, 3, 146, 116],
+      [2, 74, 46, 29, 75, 47],
+      [42, 54, 24, 1, 55, 25],
+      [23, 45, 15, 28, 46, 16],
+
+      // 32
+      [17, 145, 115],
+      [10, 74, 46, 23, 75, 47],
+      [10, 54, 24, 35, 55, 25],
+      [19, 45, 15, 35, 46, 16],
+
+      // 33
+      [17, 145, 115, 1, 146, 116],
+      [14, 74, 46, 21, 75, 47],
+      [29, 54, 24, 19, 55, 25],
+      [11, 45, 15, 46, 46, 16],
+
+      // 34
+      [13, 145, 115, 6, 146, 116],
+      [14, 74, 46, 23, 75, 47],
+      [44, 54, 24, 7, 55, 25],
+      [59, 46, 16, 1, 47, 17],
+
+      // 35
+      [12, 151, 121, 7, 152, 122],
+      [12, 75, 47, 26, 76, 48],
+      [39, 54, 24, 14, 55, 25],
+      [22, 45, 15, 41, 46, 16],
+
+      // 36
+      [6, 151, 121, 14, 152, 122],
+      [6, 75, 47, 34, 76, 48],
+      [46, 54, 24, 10, 55, 25],
+      [2, 45, 15, 64, 46, 16],
+
+      // 37
+      [17, 152, 122, 4, 153, 123],
+      [29, 74, 46, 14, 75, 47],
+      [49, 54, 24, 10, 55, 25],
+      [24, 45, 15, 46, 46, 16],
+
+      // 38
+      [4, 152, 122, 18, 153, 123],
+      [13, 74, 46, 32, 75, 47],
+      [48, 54, 24, 14, 55, 25],
+      [42, 45, 15, 32, 46, 16],
+
+      // 39
+      [20, 147, 117, 4, 148, 118],
+      [40, 75, 47, 7, 76, 48],
+      [43, 54, 24, 22, 55, 25],
+      [10, 45, 15, 67, 46, 16],
+
+      // 40
+      [19, 148, 118, 6, 149, 119],
+      [18, 75, 47, 31, 76, 48],
+      [34, 54, 24, 34, 55, 25],
+      [20, 45, 15, 61, 46, 16]
+    ];
+
+    var qrRSBlock = function(totalCount, dataCount) {
+      var _this = {};
+      _this.totalCount = totalCount;
+      _this.dataCount = dataCount;
+      return _this;
+    };
+
+    var _this = {};
+
+    var getRsBlockTable = function(typeNumber, errorCorrectionLevel) {
+
+      switch(errorCorrectionLevel) {
+      case QRErrorCorrectionLevel.L :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 0];
+      case QRErrorCorrectionLevel.M :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 1];
+      case QRErrorCorrectionLevel.Q :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 2];
+      case QRErrorCorrectionLevel.H :
+        return RS_BLOCK_TABLE[(typeNumber - 1) * 4 + 3];
+      default :
+        return undefined;
+      }
+    };
+
+    _this.getRSBlocks = function(typeNumber, errorCorrectionLevel) {
+
+      var rsBlock = getRsBlockTable(typeNumber, errorCorrectionLevel);
+
+      if (typeof rsBlock == 'undefined') {
+        throw 'bad rs block @ typeNumber:' + typeNumber +
+            '/errorCorrectionLevel:' + errorCorrectionLevel;
+      }
+
+      var length = rsBlock.length / 3;
+
+      var list = [];
+
+      for (var i = 0; i < length; i += 1) {
+
+        var count = rsBlock[i * 3 + 0];
+        var totalCount = rsBlock[i * 3 + 1];
+        var dataCount = rsBlock[i * 3 + 2];
+
+        for (var j = 0; j < count; j += 1) {
+          list.push(qrRSBlock(totalCount, dataCount) );
+        }
+      }
+
+      return list;
+    };
+
+    return _this;
+  }();
+
+  //---------------------------------------------------------------------
+  // qrBitBuffer
+  //---------------------------------------------------------------------
+
+  var qrBitBuffer = function() {
+
+    var _buffer = [];
+    var _length = 0;
+
+    var _this = {};
+
+    _this.getBuffer = function() {
+      return _buffer;
+    };
+
+    _this.getAt = function(index) {
+      var bufIndex = Math.floor(index / 8);
+      return ( (_buffer[bufIndex] >>> (7 - index % 8) ) & 1) == 1;
+    };
+
+    _this.put = function(num, length) {
+      for (var i = 0; i < length; i += 1) {
+        _this.putBit( ( (num >>> (length - i - 1) ) & 1) == 1);
+      }
+    };
+
+    _this.getLengthInBits = function() {
+      return _length;
+    };
+
+    _this.putBit = function(bit) {
+
+      var bufIndex = Math.floor(_length / 8);
+      if (_buffer.length <= bufIndex) {
+        _buffer.push(0);
+      }
+
+      if (bit) {
+        _buffer[bufIndex] |= (0x80 >>> (_length % 8) );
+      }
+
+      _length += 1;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrNumber
+  //---------------------------------------------------------------------
+
+  var qrNumber = function(data) {
+
+    var _mode = QRMode.MODE_NUMBER;
+    var _data = data;
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _data.length;
+    };
+
+    _this.write = function(buffer) {
+
+      var data = _data;
+
+      var i = 0;
+
+      while (i + 2 < data.length) {
+        buffer.put(strToNum(data.substring(i, i + 3) ), 10);
+        i += 3;
+      }
+
+      if (i < data.length) {
+        if (data.length - i == 1) {
+          buffer.put(strToNum(data.substring(i, i + 1) ), 4);
+        } else if (data.length - i == 2) {
+          buffer.put(strToNum(data.substring(i, i + 2) ), 7);
+        }
+      }
+    };
+
+    var strToNum = function(s) {
+      var num = 0;
+      for (var i = 0; i < s.length; i += 1) {
+        num = num * 10 + chatToNum(s.charAt(i) );
+      }
+      return num;
+    };
+
+    var chatToNum = function(c) {
+      if ('0' <= c && c <= '9') {
+        return c.charCodeAt(0) - '0'.charCodeAt(0);
+      }
+      throw 'illegal char :' + c;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrAlphaNum
+  //---------------------------------------------------------------------
+
+  var qrAlphaNum = function(data) {
+
+    var _mode = QRMode.MODE_ALPHA_NUM;
+    var _data = data;
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _data.length;
+    };
+
+    _this.write = function(buffer) {
+
+      var s = _data;
+
+      var i = 0;
+
+      while (i + 1 < s.length) {
+        buffer.put(
+          getCode(s.charAt(i) ) * 45 +
+          getCode(s.charAt(i + 1) ), 11);
+        i += 2;
+      }
+
+      if (i < s.length) {
+        buffer.put(getCode(s.charAt(i) ), 6);
+      }
+    };
+
+    var getCode = function(c) {
+
+      if ('0' <= c && c <= '9') {
+        return c.charCodeAt(0) - '0'.charCodeAt(0);
+      } else if ('A' <= c && c <= 'Z') {
+        return c.charCodeAt(0) - 'A'.charCodeAt(0) + 10;
+      } else {
+        switch (c) {
+        case ' ' : return 36;
+        case '$' : return 37;
+        case '%' : return 38;
+        case '*' : return 39;
+        case '+' : return 40;
+        case '-' : return 41;
+        case '.' : return 42;
+        case '/' : return 43;
+        case ':' : return 44;
+        default :
+          throw 'illegal char :' + c;
+        }
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qr8BitByte
+  //---------------------------------------------------------------------
+
+  var qr8BitByte = function(data) {
+
+    var _mode = QRMode.MODE_8BIT_BYTE;
+    var _data = data;
+    var _bytes = qrcode.stringToBytes(data);
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return _bytes.length;
+    };
+
+    _this.write = function(buffer) {
+      for (var i = 0; i < _bytes.length; i += 1) {
+        buffer.put(_bytes[i], 8);
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // qrKanji
+  //---------------------------------------------------------------------
+
+  var qrKanji = function(data) {
+
+    var _mode = QRMode.MODE_KANJI;
+    var _data = data;
+
+    var stringToBytes = qrcode.stringToBytesFuncs['SJIS'];
+    if (!stringToBytes) {
+      throw 'sjis not supported.';
+    }
+    !function(c, code) {
+      // self test for sjis support.
+      var test = stringToBytes(c);
+      if (test.length != 2 || ( (test[0] << 8) | test[1]) != code) {
+        throw 'sjis not supported.';
+      }
+    }('\u53cb', 0x9746);
+
+    var _bytes = stringToBytes(data);
+
+    var _this = {};
+
+    _this.getMode = function() {
+      return _mode;
+    };
+
+    _this.getLength = function(buffer) {
+      return ~~(_bytes.length / 2);
+    };
+
+    _this.write = function(buffer) {
+
+      var data = _bytes;
+
+      var i = 0;
+
+      while (i + 1 < data.length) {
+
+        var c = ( (0xff & data[i]) << 8) | (0xff & data[i + 1]);
+
+        if (0x8140 <= c && c <= 0x9FFC) {
+          c -= 0x8140;
+        } else if (0xE040 <= c && c <= 0xEBBF) {
+          c -= 0xC140;
+        } else {
+          throw 'illegal char at ' + (i + 1) + '/' + c;
+        }
+
+        c = ( (c >>> 8) & 0xff) * 0xC0 + (c & 0xff);
+
+        buffer.put(c, 13);
+
+        i += 2;
+      }
+
+      if (i < data.length) {
+        throw 'illegal char at ' + (i + 1);
+      }
+    };
+
+    return _this;
+  };
+
+  //=====================================================================
+  // GIF Support etc.
+  //
+
+  //---------------------------------------------------------------------
+  // byteArrayOutputStream
+  //---------------------------------------------------------------------
+
+  var byteArrayOutputStream = function() {
+
+    var _bytes = [];
+
+    var _this = {};
+
+    _this.writeByte = function(b) {
+      _bytes.push(b & 0xff);
+    };
+
+    _this.writeShort = function(i) {
+      _this.writeByte(i);
+      _this.writeByte(i >>> 8);
+    };
+
+    _this.writeBytes = function(b, off, len) {
+      off = off || 0;
+      len = len || b.length;
+      for (var i = 0; i < len; i += 1) {
+        _this.writeByte(b[i + off]);
+      }
+    };
+
+    _this.writeString = function(s) {
+      for (var i = 0; i < s.length; i += 1) {
+        _this.writeByte(s.charCodeAt(i) );
+      }
+    };
+
+    _this.toByteArray = function() {
+      return _bytes;
+    };
+
+    _this.toString = function() {
+      var s = '';
+      s += '[';
+      for (var i = 0; i < _bytes.length; i += 1) {
+        if (i > 0) {
+          s += ',';
+        }
+        s += _bytes[i];
+      }
+      s += ']';
+      return s;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // base64EncodeOutputStream
+  //---------------------------------------------------------------------
+
+  var base64EncodeOutputStream = function() {
+
+    var _buffer = 0;
+    var _buflen = 0;
+    var _length = 0;
+    var _base64 = '';
+
+    var _this = {};
+
+    var writeEncoded = function(b) {
+      _base64 += String.fromCharCode(encode(b & 0x3f) );
+    };
+
+    var encode = function(n) {
+      if (n < 0) {
+        // error.
+      } else if (n < 26) {
+        return 0x41 + n;
+      } else if (n < 52) {
+        return 0x61 + (n - 26);
+      } else if (n < 62) {
+        return 0x30 + (n - 52);
+      } else if (n == 62) {
+        return 0x2b;
+      } else if (n == 63) {
+        return 0x2f;
+      }
+      throw 'n:' + n;
+    };
+
+    _this.writeByte = function(n) {
+
+      _buffer = (_buffer << 8) | (n & 0xff);
+      _buflen += 8;
+      _length += 1;
+
+      while (_buflen >= 6) {
+        writeEncoded(_buffer >>> (_buflen - 6) );
+        _buflen -= 6;
+      }
+    };
+
+    _this.flush = function() {
+
+      if (_buflen > 0) {
+        writeEncoded(_buffer << (6 - _buflen) );
+        _buffer = 0;
+        _buflen = 0;
+      }
+
+      if (_length % 3 != 0) {
+        // padding
+        var padlen = 3 - _length % 3;
+        for (var i = 0; i < padlen; i += 1) {
+          _base64 += '=';
+        }
+      }
+    };
+
+    _this.toString = function() {
+      return _base64;
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // base64DecodeInputStream
+  //---------------------------------------------------------------------
+
+  var base64DecodeInputStream = function(str) {
+
+    var _str = str;
+    var _pos = 0;
+    var _buffer = 0;
+    var _buflen = 0;
+
+    var _this = {};
+
+    _this.read = function() {
+
+      while (_buflen < 8) {
+
+        if (_pos >= _str.length) {
+          if (_buflen == 0) {
+            return -1;
+          }
+          throw 'unexpected end of file./' + _buflen;
+        }
+
+        var c = _str.charAt(_pos);
+        _pos += 1;
+
+        if (c == '=') {
+          _buflen = 0;
+          return -1;
+        } else if (c.match(/^\s$/) ) {
+          // ignore if whitespace.
+          continue;
+        }
+
+        _buffer = (_buffer << 6) | decode(c.charCodeAt(0) );
+        _buflen += 6;
+      }
+
+      var n = (_buffer >>> (_buflen - 8) ) & 0xff;
+      _buflen -= 8;
+      return n;
+    };
+
+    var decode = function(c) {
+      if (0x41 <= c && c <= 0x5a) {
+        return c - 0x41;
+      } else if (0x61 <= c && c <= 0x7a) {
+        return c - 0x61 + 26;
+      } else if (0x30 <= c && c <= 0x39) {
+        return c - 0x30 + 52;
+      } else if (c == 0x2b) {
+        return 62;
+      } else if (c == 0x2f) {
+        return 63;
+      } else {
+        throw 'c:' + c;
+      }
+    };
+
+    return _this;
+  };
+
+  //---------------------------------------------------------------------
+  // gifImage (B/W)
+  //---------------------------------------------------------------------
+
+  var gifImage = function(width, height) {
+
+    var _width = width;
+    var _height = height;
+    var _data = new Array(width * height);
+
+    var _this = {};
+
+    _this.setPixel = function(x, y, pixel) {
+      _data[y * _width + x] = pixel;
+    };
+
+    _this.write = function(out) {
+
+      //---------------------------------
+      // GIF Signature
+
+      out.writeString('GIF87a');
+
+      //---------------------------------
+      // Screen Descriptor
+
+      out.writeShort(_width);
+      out.writeShort(_height);
+
+      out.writeByte(0x80); // 2bit
+      out.writeByte(0);
+      out.writeByte(0);
+
+      //---------------------------------
+      // Global Color Map
+
+      // black
+      out.writeByte(0x00);
+      out.writeByte(0x00);
+      out.writeByte(0x00);
+
+      // white
+      out.writeByte(0xff);
+      out.writeByte(0xff);
+      out.writeByte(0xff);
+
+      //---------------------------------
+      // Image Descriptor
+
+      out.writeString(',');
+      out.writeShort(0);
+      out.writeShort(0);
+      out.writeShort(_width);
+      out.writeShort(_height);
+      out.writeByte(0);
+
+      //---------------------------------
+      // Local Color Map
+
+      //---------------------------------
+      // Raster Data
+
+      var lzwMinCodeSize = 2;
+      var raster = getLZWRaster(lzwMinCodeSize);
+
+      out.writeByte(lzwMinCodeSize);
+
+      var offset = 0;
+
+      while (raster.length - offset > 255) {
+        out.writeByte(255);
+        out.writeBytes(raster, offset, 255);
+        offset += 255;
+      }
+
+      out.writeByte(raster.length - offset);
+      out.writeBytes(raster, offset, raster.length - offset);
+      out.writeByte(0x00);
+
+      //---------------------------------
+      // GIF Terminator
+      out.writeString(';');
+    };
+
+    var bitOutputStream = function(out) {
+
+      var _out = out;
+      var _bitLength = 0;
+      var _bitBuffer = 0;
+
+      var _this = {};
+
+      _this.write = function(data, length) {
+
+        if ( (data >>> length) != 0) {
+          throw 'length over';
+        }
+
+        while (_bitLength + length >= 8) {
+          _out.writeByte(0xff & ( (data << _bitLength) | _bitBuffer) );
+          length -= (8 - _bitLength);
+          data >>>= (8 - _bitLength);
+          _bitBuffer = 0;
+          _bitLength = 0;
+        }
+
+        _bitBuffer = (data << _bitLength) | _bitBuffer;
+        _bitLength = _bitLength + length;
+      };
+
+      _this.flush = function() {
+        if (_bitLength > 0) {
+          _out.writeByte(_bitBuffer);
+        }
+      };
+
+      return _this;
+    };
+
+    var getLZWRaster = function(lzwMinCodeSize) {
+
+      var clearCode = 1 << lzwMinCodeSize;
+      var endCode = (1 << lzwMinCodeSize) + 1;
+      var bitLength = lzwMinCodeSize + 1;
+
+      // Setup LZWTable
+      var table = lzwTable();
+
+      for (var i = 0; i < clearCode; i += 1) {
+        table.add(String.fromCharCode(i) );
+      }
+      table.add(String.fromCharCode(clearCode) );
+      table.add(String.fromCharCode(endCode) );
+
+      var byteOut = byteArrayOutputStream();
+      var bitOut = bitOutputStream(byteOut);
+
+      // clear code
+      bitOut.write(clearCode, bitLength);
+
+      var dataIndex = 0;
+
+      var s = String.fromCharCode(_data[dataIndex]);
+      dataIndex += 1;
+
+      while (dataIndex < _data.length) {
+
+        var c = String.fromCharCode(_data[dataIndex]);
+        dataIndex += 1;
+
+        if (table.contains(s + c) ) {
+
+          s = s + c;
+
+        } else {
+
+          bitOut.write(table.indexOf(s), bitLength);
+
+          if (table.size() < 0xfff) {
+
+            if (table.size() == (1 << bitLength) ) {
+              bitLength += 1;
+            }
+
+            table.add(s + c);
+          }
+
+          s = c;
+        }
+      }
+
+      bitOut.write(table.indexOf(s), bitLength);
+
+      // end code
+      bitOut.write(endCode, bitLength);
+
+      bitOut.flush();
+
+      return byteOut.toByteArray();
+    };
+
+    var lzwTable = function() {
+
+      var _map = {};
+      var _size = 0;
+
+      var _this = {};
+
+      _this.add = function(key) {
+        if (_this.contains(key) ) {
+          throw 'dup key:' + key;
+        }
+        _map[key] = _size;
+        _size += 1;
+      };
+
+      _this.size = function() {
+        return _size;
+      };
+
+      _this.indexOf = function(key) {
+        return _map[key];
+      };
+
+      _this.contains = function(key) {
+        return typeof _map[key] != 'undefined';
+      };
+
+      return _this;
+    };
+
+    return _this;
+  };
+
+  var createDataURL = function(width, height, getPixel) {
+    var gif = gifImage(width, height);
+    for (var y = 0; y < height; y += 1) {
+      for (var x = 0; x < width; x += 1) {
+        gif.setPixel(x, y, getPixel(x, y) );
+      }
+    }
+
+    var b = byteArrayOutputStream();
+    gif.write(b);
+
+    var base64 = base64EncodeOutputStream();
+    var bytes = b.toByteArray();
+    for (var i = 0; i < bytes.length; i += 1) {
+      base64.writeByte(bytes[i]);
+    }
+    base64.flush();
+
+    return 'data:image/gif;base64,' + base64;
+  };
+
+  //---------------------------------------------------------------------
+  // returns qrcode function.
+
+  return qrcode;
+}();
+
+// multibyte support
+!function() {
+
+  qrcode.stringToBytesFuncs['UTF-8'] = function(s) {
+    // http://stackoverflow.com/questions/18729405/how-to-convert-utf8-string-to-byte-array
+    function toUTF8Array(str) {
+      var utf8 = [];
+      for (var i=0; i < str.length; i++) {
+        var charcode = str.charCodeAt(i);
+        if (charcode < 0x80) utf8.push(charcode);
+        else if (charcode < 0x800) {
+          utf8.push(0xc0 | (charcode >> 6),
+              0x80 | (charcode & 0x3f));
+        }
+        else if (charcode < 0xd800 || charcode >= 0xe000) {
+          utf8.push(0xe0 | (charcode >> 12),
+              0x80 | ((charcode>>6) & 0x3f),
+              0x80 | (charcode & 0x3f));
+        }
+        // surrogate pair
+        else {
+          i++;
+          // UTF-16 encodes 0x10000-0x10FFFF by
+          // subtracting 0x10000 and splitting the
+          // 20 bits of 0x0-0xFFFFF into two halves
+          charcode = 0x10000 + (((charcode & 0x3ff)<<10)
+            | (str.charCodeAt(i) & 0x3ff));
+          utf8.push(0xf0 | (charcode >>18),
+              0x80 | ((charcode>>12) & 0x3f),
+              0x80 | ((charcode>>6) & 0x3f),
+              0x80 | (charcode & 0x3f));
+        }
+      }
+      return utf8;
+    }
+    return toUTF8Array(s);
+  };
+
+}();
+
+(function (factory) {
+  if (typeof define === 'function' && define.amd) {
+      define([], factory);
+  } else if (typeof exports === 'object') {
+      module.exports = factory();
+  }
+}(function () {
+    return qrcode;
+}));
+
+</script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #EFEFED; color: #1A1A1A; min-height: 100vh; }
+
+/* ── TABS ── */
+.tab-bar { display: flex; background: #fff; border-bottom: 1px solid #E0DDD8; padding: 0 1.5rem; gap: 0; position: sticky; top: 0; z-index: 10; }
+.tab { padding: 0.85rem 1.25rem; font-size: 0.78rem; letter-spacing: 0.05em; color: #888; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; user-select: none; }
+.tab:hover { color: #333; }
+.tab.active { color: #1A1A1A; border-bottom-color: #1A1A1A; font-weight: 500; }
+
+.view { display: none; }
+.view.active { display: flex; }
+
+/* ── EDITOR VIEW ── */
+#view-editor { min-height: calc(100vh - 45px); }
+
+/* SIDEBAR – light grey */
+.sidebar {
+  width: 340px; flex-shrink: 0;
+  background: #F5F4F1;
+  border-right: 1px solid #E0DDD8;
+  display: flex; flex-direction: column;
+  height: calc(100vh - 45px);
+  position: sticky; top: 45px;
+  overflow-y: auto;
+}
+.sidebar-logo {
+  padding: 1.1rem 1.4rem 1rem;
+  border-bottom: 1px solid #E0DDD8;
+  display: flex; flex-direction: column; gap: 0;
+}
+.ch-badge { width: 20px; height: 20px; background: #C0001A; border-radius: 2px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ch-badge svg { width: 11px; height: 11px; }
+.sidebar-logo span { font-size: 0.82rem; font-weight: 500; color: #333; letter-spacing: 0.03em; }
+
+.sidebar-body { padding: 0.9rem 1.1rem; flex: 1; }
+
+/* Groups */
+.group {
+  background: #fff;
+  border: 1px solid #E4E2DC;
+  border-radius: 6px;
+  margin-bottom: 0.7rem;
+  overflow: hidden;
+}
+.group-header {
+  padding: 0.5rem 0.85rem;
+  background: #F0EFEC;
+  border-bottom: 1px solid #E4E2DC;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #888;
+  font-weight: 500;
+}
+.group-body { padding: 0.7rem 0.85rem; }
+
+.row { display: grid; gap: 0.4rem; margin-bottom: 0.4rem; }
+.row.c2 { grid-template-columns: 1fr 1fr; }
+.row.c1 { grid-template-columns: 1fr; }
+.row:last-child { margin-bottom: 0; }
+
+.f label { display: block; font-size: 0.6rem; color: #999; margin-bottom: 0.2rem; }
+.f input, .f select {
+  width: 100%; padding: 0.35rem 0.55rem;
+  background: #FAFAF9; border: 1px solid #DDDBD6; color: #1A1A1A;
+  font-size: 0.78rem; font-family: inherit; border-radius: 4px;
+  transition: border-color 0.15s;
+}
+.f input:focus, .f select:focus { outline: none; border-color: #999; background: #fff; }
+
+/* Positions */
+.pos-item {
+  border: 1px solid #E4E2DC; border-radius: 4px;
+  padding: 0.55rem 0.7rem; margin-bottom: 0.4rem;
+  background: #fff; position: relative;
+}
+.pos-item-num { position: absolute; top: 0.55rem; right: 0.7rem; font-size: 0.6rem; color: #ccc; }
+.pos-item-label { font-size: 0.6rem; color: #999; margin-bottom: 0.2rem; margin-top: 0.4rem; }
+.pos-item-label:first-of-type { margin-top: 0; }
+.pos-item input {
+  width: 100%; padding: 0.35rem 0.55rem;
+  background: #FAFAF9; border: 1px solid #DDDBD6; color: #1A1A1A;
+  font-size: 0.78rem; font-family: inherit; border-radius: 4px;
+  transition: border-color 0.15s;
+}
+.pos-item input:focus { outline: none; border-color: #999; background: #fff; }
+.pos-item input::placeholder { color: #bbb; }
+.pos-item-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.4rem; }
+.pos-del {
+  position: absolute; top: 0.45rem; right: 2rem;
+  background: none; border: none; color: #ccc; cursor: pointer; font-size: 14px; padding: 0; line-height: 1;
+}
+.pos-del:hover { color: #C0001A; }
+.btn-add {
+  background: none; border: 1px dashed #CCC; color: #aaa;
+  padding: 0.28rem 0.5rem; font-size: 0.68rem; border-radius: 4px;
+  cursor: pointer; width: 100%; transition: all 0.15s;
+}
+.btn-add:hover { border-color: #999; color: #555; }
+
+.mwst-row { display: flex; align-items: center; gap: 8px; }
+.mwst-row label { font-size: 0.68rem; color: #888; }
+.mwst-row input {
+  width: 60px; padding: 0.32rem 0.45rem;
+  background: #FAFAF9; border: 1px solid #DDDBD6; color: #1A1A1A;
+  font-size: 0.78rem; border-radius: 4px;
+}
+
+/* Sidebar footer */
+.sidebar-footer { padding: 0.85rem 1.1rem; border-top: 1px solid #E0DDD8; background: #F5F4F1; }
+.btn-row { display: flex; gap: 0.4rem; margin-bottom: 0.4rem; }
+.btn-tpl {
+  flex: 1; background: #fff; border: 1px solid #DDDBD6; color: #555;
+  padding: 0.45rem 0; font-size: 0.7rem; font-family: inherit;
+  cursor: pointer; border-radius: 4px; transition: all 0.15s;
+}
+.btn-tpl:hover { border-color: #999; color: #222; }
+.btn-tpl.saved { border-color: #4A8A4A; color: #4A8A4A; }
+.btn-pdf {
+  width: 100%; padding: 0.65rem;
+  background: #1A1A1A; color: #fff; border: none;
+  font-size: 0.8rem; font-family: inherit; letter-spacing: 0.05em;
+  cursor: pointer; border-radius: 4px; transition: background 0.15s;
+}
+.btn-pdf:hover { background: #333; }
+
+/* ── PREVIEW ── */
+.preview-area { flex: 1; padding: 1.75rem; display: flex; flex-direction: column; align-items: center; overflow-y: auto; }
+.preview-label { font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase; color: #999; margin-bottom: 0.9rem; align-self: flex-start; }
+
+/* A4 */
+.a4 {
+  background: white; width: 210mm; min-height: 297mm;
+  box-shadow: 0 4px 28px rgba(0,0,0,0.12);
+  display: flex; flex-direction: column;
+  font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 9pt;
+}
+.inv-head { padding: 13mm 14mm 7mm; display: flex; justify-content: flex-end; }
+.inv-sender { font-size: 8.5pt; line-height: 1.55; text-align: right; }
+.inv-sender .company { font-size: 10.5pt; font-weight: bold; margin-bottom: 1mm; }
+.inv-to { padding: 0 14mm 5mm; }
+.to-name { font-size: 9pt; font-weight: bold; }
+.to-addr { font-size: 8.5pt; color: #444; line-height: 1.55; }
+.inv-ref { padding: 14mm 14mm 7mm; }
+.inv-title { font-size: 11.5pt; font-weight: bold; margin-bottom: 2mm; }
+.meta-row { font-size: 8pt; color: #666; margin-bottom: 1mm; }
+.meta-row span { color: #1A1A1A; font-weight: 500; }
+.inv-table-wrap { padding: 0 14mm; }
+table.inv-table { width: 100%; border-collapse: collapse; font-size: 8.5pt; table-layout: fixed; }
+table.inv-table thead tr { border-bottom: 1px solid #1A1A1A; }
+table.inv-table thead th { padding: 0 0 2.5mm 0; text-align: right; font-size: 7.5pt; font-weight: 600; letter-spacing: 0.02em; color: #333; }
+table.inv-table thead th.desc, table.inv-table thead th.per { text-align: left; }
+table.inv-table tbody tr { border-bottom: 0.4px solid #E5E2DC; }
+table.inv-table tbody td { padding: 3.5mm 0; vertical-align: middle; text-align: right; white-space: nowrap; }
+table.inv-table tbody td.desc { text-align: left; white-space: normal; }
+table.inv-table tbody td.per { text-align: left; }
+table.inv-table tbody td.pos { color: #aaa; text-align: left; }
+.inv-totals { padding: 3mm 14mm; display: flex; justify-content: flex-end; }
+.totals-block { width: 72mm; }
+.tot-row { display: flex; justify-content: space-between; padding: 1.5mm 0; font-size: 8.5pt; border-bottom: 0.4px solid #EEECEA; color: #555; }
+.tot-row.total { font-weight: bold; font-size: 9.5pt; color: #1A1A1A; border-top: 1px solid #1A1A1A; border-bottom: none; margin-top: 1mm; padding-top: 2mm; }
+.spacer { flex: 1; }
+
+/* Payment slip */
+.slip-sep { border: none; border-top: 1.5px dashed #C5C3BD; position: relative; margin: 0; }
+.slip-scissors { position: absolute; left: 50%; top: -8px; transform: translateX(-50%); background: white; padding: 0 4px; font-size: 13px; color: #C5C3BD; }
+.slip { display: grid; grid-template-columns: 62mm 5mm 1fr; min-height: 105mm; font-size: 7pt; }
+.slip-receipt { padding: 5mm 4mm; border-right: 1.5px dashed #C5C3BD; display: flex; flex-direction: column; }
+.slip-div-col { display: flex; align-items: center; justify-content: center; }
+.slip-payment { padding: 5mm 5mm; }
+.slip-block-title { font-size: 8.5pt; font-weight: bold; margin-bottom: 4mm; }
+.sf { margin-bottom: 3mm; }
+.sf-lbl { font-size: 6pt; font-weight: bold; color: #666; margin-bottom: 0.8mm; }
+.sf-val { font-size: 7pt; line-height: 1.45; color: #1A1A1A; }
+.slip-ca { display: flex; gap: 8mm; margin-top: 3mm; }
+.slip-ca-col label { font-size: 6pt; font-weight: bold; color: #666; display: block; margin-bottom: 1mm; }
+.slip-ca-col .v { font-size: 7.5pt; }
+.slip-accept { font-size: 6pt; color: #aaa; text-align: right; margin-top: auto; }
+.slip-pay-grid { display: grid; grid-template-columns: 47mm 1fr; gap: 4mm; }
+#qr-preview { width: 40mm; height: 40mm; }
+#qr-preview canvas, #qr-preview img { width: 40mm !important; height: 40mm !important; }
+
+/* ── WORKFLOW ── */
+#view-workflow { flex-direction: column; padding: 2rem; background: #EFEFED; min-height: calc(100vh - 45px); }
+.year-header { margin-bottom: 1rem; }
+.year-header h2 { font-size: 1rem; font-weight: 500; color: #333; }
+.year-note { font-size: 0.75rem; color: #999; margin-top: 0.2rem; }
+.btn-history-toggle {
+  padding: 0.4rem 0.85rem; background: #fff; border: 1px solid #DDDBD6;
+  color: #666; font-size: 0.72rem; font-family: inherit; border-radius: 4px;
+  cursor: pointer; display: flex; align-items: center; gap: 5px; transition: all 0.15s;
+}
+.btn-history-toggle:hover { border-color: #999; color: #333; }
+
+.workflow-body { display: flex; gap: 1.25rem; }
+.workflow-main { flex: 1; min-width: 0; }
+
+/* History panel */
+.history-panel {
+  width: 260px; flex-shrink: 0;
+  background: #F5F4F1; border: 1px solid #E4E2DC; border-radius: 6px;
+  overflow: hidden; max-height: 80vh; overflow-y: auto;
+  display: block;
+}
+.history-panel-title { padding: 0.55rem 0.85rem; font-size: 0.6rem; font-weight: 500; color: #aaa; border-bottom: 1px solid #E4E2DC; letter-spacing: 0.1em; text-transform: uppercase; background: #EDEBE7; }
+.history-item { padding: 0.45rem 0.85rem; border-bottom: 1px solid #E8E6E1; font-size: 0.72rem; color: #888; display: flex; justify-content: space-between; align-items: baseline; gap: 0.4rem; }
+.history-item .hi-name { color: #555; font-weight: 500; font-size: 0.72rem; }
+.history-item .hi-meta { font-size: 0.6rem; color: #bbb; white-space: nowrap; }
+
+.customer-row { margin-bottom: 1.25rem; cursor: default; }
+.customer-row.dragging { opacity: 0.5; }
+.customer-row-header {
+  display: flex; align-items: center; gap: 0.5rem;
+  margin-bottom: 0.5rem; padding-bottom: 0.35rem;
+  border-bottom: 1px solid #E0DDD8;
+}
+.drag-handle {
+  cursor: grab; color: #ccc; font-size: 14px; padding: 0 2px;
+  display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;
+}
+.drag-handle span { display: block; width: 14px; border-top: 1.5px dotted #bbb; }
+.drag-handle:active { cursor: grabbing; }
+.customer-row-name { font-size: 0.85rem; font-weight: 500; color: #333; flex: 1; }
+.customer-row-meta { font-size: 0.7rem; color: #bbb; }
+.btn-delete-customer {
+  background: none; border: none; color: #ccc; cursor: pointer;
+  padding: 2px 4px; font-size: 14px; line-height: 1; transition: color 0.15s;
+  flex-shrink: 0;
+}
+.btn-delete-customer:hover { color: #C0001A; }
+
+.customer-row-body { display: flex; gap: 0.75rem; align-items: flex-start; }
+.customer-cards { display: flex; gap: 0.6rem; flex-shrink: 0; }
+.customer-mail-fields {
+  display: flex; flex-direction: column; gap: 0.4rem;
+  flex: 1; min-width: 0;
+  background: #fff; border: 1px solid #E4E2DC; border-radius: 6px;
+  padding: 0.65rem 0.85rem;
+}
+.customer-mail-fields .cmf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.customer-mail-fields label { font-size: 0.58rem; color: #aaa; display: block; margin-bottom: 0.15rem; }
+.customer-mail-fields input {
+  width: 100%; padding: 0.3rem 0.5rem;
+  background: #FAFAF9; border: 1px solid #DDDBD6; color: #1A1A1A;
+  font-size: 0.75rem; font-family: inherit; border-radius: 3px;
+}
+.customer-mail-fields input:focus { outline: none; border-color: #999; }
+
+/* slim card */
+.month-card {
+  background: #fff; border: 1px solid #E4E2DC; border-radius: 6px;
+  display: flex; align-items: stretch; overflow: hidden;
+  width: 260px; flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  transition: opacity 0.2s;
+}
+.month-card.next { opacity: 1; } /* next month no longer dimmed */
+
+
+.next-badge {
+  position: absolute; top: -1px; right: -1px;
+  background: #E0F2FE; color: #0369A1; font-size: 0.55rem;
+  font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 0 6px 0 4px; border-left: 1px solid #BAE6FD; border-bottom: 1px solid #BAE6FD;
+}
+
+
+.overdue-card { border-color: #FECACA !important; background: #FFF5F5 !important; }
+.overdue-card .card-date { color: #C0001A; }
+.overdue-card .card-amount { color: #C0001A; }
+
+.overdue-card { border-color: #FECACA !important; background: #FFF5F5 !important; }
+.overdue-card .card-amount { color: #C0001A; }
+
+.month-card.paid-card .card-date { color: #4A8A4A; }
+.month-card.paid-card { border-color: #BBF7D0; background: #F0FDF4; }
+.one-time-switch { display: flex; align-items: center; gap: 0.4rem; }
+.one-time-label { font-size: 0.65rem; color: #888; }
+.switch { position: relative; display: inline-block; width: 28px; height: 16px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #E0DDD8; border-radius: 16px; transition: 0.2s; }
+.switch-slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.2s; }
+.switch input:checked + .switch-slider { background: #4A8A4A; }
+.switch input:checked + .switch-slider:before { transform: translateX(12px); }
+
+.card-left { padding: 0.6rem 0.75rem; flex: 1; min-width: 0; }
+.card-date { font-size: 0.8rem; font-weight: 600; color: #1A1A1A; }
+.card-periode { font-size: 0.68rem; color: #888; margin-top: 0.1rem; }
+.card-amount { font-size: 0.78rem; color: #aaa; margin-top: 0.25rem; }
+.card-paid-row { margin-top: 0.4rem; display: flex; align-items: center; gap: 5px; }
+.card-paid-row input[type=checkbox] { width: 13px; height: 13px; accent-color: #4A8A4A; cursor: pointer; }
+.card-paid-row label { font-size: 0.62rem; color: #aaa; cursor: pointer; }
+.card-actions { display: flex; flex-direction: column; border-left: 1px solid #F0EEE9; }
+.btn-month-pdf {
+  padding: 0 0.65rem; background: #fff; color: #555;
+  border: none; border-bottom: 1px solid #F0EEE9;
+  font-size: 0.68rem; font-family: inherit;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  flex: 1; display: flex; align-items: center; gap: 4px;
+}
+.btn-month-pdf:hover { background: #F5F4F1; color: #1A1A1A; }
+.btn-month-mail {
+  padding: 0 0.65rem; background: #fff; color: #555;
+  border: none; font-size: 0.68rem; font-family: inherit;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  flex: 1; display: flex; align-items: center; gap: 4px;
+}
+.btn-month-mail:hover { background: #F5F4F1; color: #1A1A1A; }
+.year-empty { text-align: center; color: #bbb; font-size: 0.85rem; padding: 3rem; }
+
+
+/* ── FACTORING LOGIN ── */
+.fact-login-screen { display:flex; align-items:center; justify-content:center; min-height:calc(100vh - 45px); background:#EFEFED; }
+.fact-login-box { background:#fff; border:1px solid #E4E2DC; border-radius:10px; padding:2rem; width:340px; box-shadow:0 4px 24px rgba(0,0,0,0.08); }
+.fact-login-logo { display:flex; align-items:center; gap:8px; margin-bottom:1.5rem; }
+.fact-login-logo span { font-size:0.85rem; font-weight:500; color:#333; }
+.fact-login-title { font-size:1.1rem; font-weight:600; color:#1A1A1A; margin-bottom:1rem; }
+.fact-login-error { font-size:0.72rem; color:#C0001A; margin-bottom:0.5rem; min-height:1rem; }
+
+/* ── FACTORING CARDS GRID ── */
+.fact-cards-grid { display:flex; flex-wrap:wrap; gap:1rem; padding:0; }
+.fact-inv-card {
+  background:#fff; border:1px solid #E4E2DC; border-radius:8px;
+  width:260px; overflow:hidden; cursor:default;
+  box-shadow:0 1px 4px rgba(0,0,0,0.06); transition:box-shadow 0.15s;
+  display:flex; flex-direction:column; user-select:none;
+}
+.fact-inv-card:hover { box-shadow:0 4px 16px rgba(0,0,0,0.1); }
+.fact-inv-card-preview {
+  width:100%; overflow:hidden; position:relative;
+  background:#F8F7F5; border-bottom:1px solid #F0EEE9; pointer-events:none;
+}
+.fact-inv-card-body { padding:0.65rem 0.75rem; flex:1; }
+.fact-inv-card-nr { font-size:0.78rem; font-weight:600; color:#1A1A1A; }
+.fact-inv-card-meta { font-size:0.65rem; color:#aaa; margin-top:0.15rem; }
+.fact-inv-card-amount { font-size:0.9rem; font-weight:700; color:#1A1A1A; margin-top:0.3rem; }
+.fact-inv-card-status { display:inline-block; margin-top:0.35rem; font-size:0.6rem; padding:0.15rem 0.5rem; border-radius:20px; font-weight:500; }
+
+/* Offer overlay on card */
+.fact-inv-card-offer { background:#F0FDF4; border-top:1px solid #BBF7D0; padding:0.55rem 0.75rem; }
+.fact-inv-card-offer-lbl { font-size:0.6rem; color:#059669; font-weight:600; text-transform:uppercase; margin-bottom:0.2rem; }
+.fact-inv-card-offer-amt { font-size:1rem; font-weight:700; color:#059669; }
+.fact-inv-card-offer-days { font-size:0.65rem; color:#555; }
+.fact-inv-card-offer-btns { display:flex; gap:0.4rem; margin-top:0.45rem; }
+.btn-co-accept { flex:1; padding:0.35rem; background:#059669; color:#fff; border:none; font-size:0.7rem; font-family:inherit; border-radius:3px; cursor:pointer; }
+.btn-co-decline { flex:1; padding:0.35rem; background:#fff; color:#888; border:1px solid #DDDBD6; font-size:0.7rem; font-family:inherit; border-radius:3px; cursor:pointer; }
+
+.fact-logout-btn { padding:0.38rem 0.85rem; background:#fff; border:1px solid #DDDBD6; color:#666; font-size:0.72rem; font-family:inherit; border-radius:4px; cursor:pointer; }
+.fact-logout-btn:hover { border-color:#999; color:#333; }
+
+/* ── FACTORING (admin) ── */
+#view-factoring { flex-direction: column; padding: 2rem; background: #EFEFED; min-height: calc(100vh - 45px); }
+.factoring-header { margin-bottom: 1.5rem; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+.factoring-header h2 { font-size: 1rem; font-weight: 500; color: #333; }
+.factoring-note { font-size: 0.75rem; color: #999; margin-top: 0.2rem; }
+
+.factoring-empty { text-align: center; color: #bbb; font-size: 0.85rem; padding: 3rem; }
+
+.factoring-grid { display: flex; flex-direction: column; gap: 1.25rem; }
+
+.fact-card {
+  background: #fff; border: 1px solid #E4E2DC; border-radius: 8px;
+  overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+.fact-card-header {
+  padding: 0.85rem 1.1rem; background: #F8F7F5;
+  border-bottom: 1px solid #E4E2DC;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+}
+.fact-card-title { font-size: 0.88rem; font-weight: 500; color: #1A1A1A; }
+.fact-card-meta { font-size: 0.72rem; color: #aaa; }
+.fact-card-amount { font-size: 1rem; font-weight: 600; color: #1A1A1A; white-space: nowrap; }
+.fact-status {
+  font-size: 0.65rem; padding: 0.2rem 0.6rem; border-radius: 20px;
+  font-weight: 500; letter-spacing: 0.05em; white-space: nowrap;
+}
+.fact-status.open { background: #EFF6FF; color: #3B82F6; border: 1px solid #BFDBFE; }
+.fact-status.offers { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+.fact-status.accepted { background: #F5F3FF; color: #7C3AED; border: 1px solid #DDD6FE; }
+.fact-status.withdrawn { background: #F9FAFB; color: #9CA3AF; border: 1px solid #E5E7EB; }
+
+.fact-card-body { padding: 1rem 1.1rem; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; }
+.fact-info-block label { font-size: 0.6rem; color: #aaa; display: block; margin-bottom: 0.2rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.fact-info-block span { font-size: 0.82rem; color: #333; font-weight: 500; }
+
+.fact-offers-section { padding: 0 1.1rem 1rem; }
+.fact-offers-title { font-size: 0.65rem; color: #999; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.6rem; }
+.fact-offers-list { display: flex; flex-direction: column; gap: 0.4rem; }
+
+.fact-offer {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0.85rem; background: #FAFAF9;
+  border: 1px solid #E4E2DC; border-radius: 5px;
+}
+.fact-offer.winning { border-color: #A7F3D0; background: #ECFDF5; }
+.fact-offer-provider { font-size: 0.78rem; font-weight: 500; color: #333; flex: 1; }
+.fact-offer-detail { font-size: 0.72rem; color: #666; }
+.fact-offer-net { font-size: 0.85rem; font-weight: 600; color: #059669; white-space: nowrap; }
+.fact-offer-actions { display: flex; gap: 0.4rem; margin-left: auto; }
+.btn-accept-offer {
+  padding: 0.3rem 0.7rem; background: #1A1A1A; color: #fff;
+  border: none; font-size: 0.68rem; font-family: inherit;
+  border-radius: 3px; cursor: pointer; white-space: nowrap;
+}
+.btn-accept-offer:hover { background: #333; }
+.btn-decline-offer {
+  padding: 0.3rem 0.7rem; background: #fff; color: #888;
+  border: 1px solid #DDDBD6; font-size: 0.68rem; font-family: inherit;
+  border-radius: 3px; cursor: pointer;
+}
+.btn-decline-offer:hover { border-color: #C0001A; color: #C0001A; }
+
+.fact-card-footer { padding: 0.6rem 1.1rem; border-top: 1px solid #F0EEE9; display: flex; justify-content: flex-end; gap: 0.5rem; }
+.btn-withdraw {
+  padding: 0.4rem 0.85rem; background: #fff; color: #aaa;
+  border: 1px solid #E4E2DC; font-size: 0.72rem; font-family: inherit;
+  border-radius: 3px; cursor: pointer; transition: all 0.15s;
+}
+.btn-withdraw:hover { border-color: #C0001A; color: #C0001A; }
+
+
+.fact-providers-section { padding: 0.85rem 1.1rem; border-top: 1px solid #F0EEE9; }
+.fact-providers-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; }
+.fact-select-all { background: none; border: none; font-size: 0.68rem; color: #7A6AAA; cursor: pointer; text-decoration: underline; font-family: inherit; }
+.fact-providers-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; margin-bottom: 0.75rem; }
+.fact-provider-item {
+  display: flex; align-items: flex-start; gap: 0.5rem;
+  padding: 0.55rem 0.7rem; border: 1px solid #E4E2DC; border-radius: 5px;
+  cursor: pointer; transition: all 0.15s; background: #FAFAF9;
+}
+.fact-provider-item.checked { border-color: #7A6AAA; background: #F5F3FF; }
+.fact-provider-item input[type=checkbox] { margin-top: 2px; flex-shrink: 0; accent-color: #7A6AAA; }
+.fact-provider-name { font-size: 0.78rem; font-weight: 500; color: #1A1A1A; }
+.fact-provider-meta { font-size: 0.65rem; color: #aaa; margin-top: 0.15rem; }
+.fact-provider-meta a { color: #aaa; }
+.fact-provider-email { font-size: 0.65rem; color: #999; margin-top: 0.1rem; font-family: monospace; }
+.btn-send-providers {
+  width: 100%; padding: 0.6rem; background: #1A1A1A; color: #fff;
+  border: none; font-size: 0.78rem; font-family: inherit; border-radius: 4px;
+  cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: background 0.15s;
+}
+.btn-send-providers:hover { background: #333; }
+.fact-sent-note { font-size: 0.72rem; color: #059669; padding: 0.4rem 0; }
+
+
+
+.fact-mode-bar { display: flex; gap: 0.5rem; padding: 1rem 2rem 0; background: #EFEFED; }
+.fact-mode-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0.42rem 0.9rem; background: #fff; border: 1px solid #DDDBD6;
+  color: #666; font-size: 0.75rem; font-family: inherit; border-radius: 4px;
+  cursor: pointer; transition: all 0.15s;
+}
+.fact-mode-btn.active { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
+.fact-mode-btn:hover:not(.active) { border-color: #999; color: #333; }
+#fact-client-view { padding: 0 2rem 2rem; }
+#fact-admin-view { padding: 0 2rem 2rem; }
+
+.fact-sent-info { padding: 0.65rem 1.1rem; font-size: 0.75rem; color: #059669; display: flex; align-items: center; gap: 6px; border-top: 1px solid #F0EEE9; }
+
+.fact-client-offer { padding: 1rem 1.1rem; background: #F0FDF4; border-top: 1px solid #BBF7D0; }
+.fact-client-offer-title { font-size: 0.72rem; font-weight: 600; color: #059669; margin-bottom: 0.6rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.fact-client-offer-row { display: flex; gap: 2rem; margin-bottom: 0.75rem; }
+.fact-client-offer-lbl { font-size: 0.62rem; color: #aaa; margin-bottom: 0.2rem; }
+.fact-client-offer-amt { font-size: 1.15rem; font-weight: 700; color: #059669; }
+.fact-client-offer-val { font-size: 0.9rem; font-weight: 500; color: #333; }
+.fact-client-offer-actions { display: flex; gap: 0.5rem; }
+.btn-client-accept { padding: 0.45rem 1.1rem; background: #059669; color: #fff; border: none; font-size: 0.78rem; font-family: inherit; border-radius: 4px; cursor: pointer; }
+.btn-client-accept:hover { background: #047857; }
+.btn-client-decline { padding: 0.45rem 0.85rem; background: #fff; color: #888; border: 1px solid #DDDBD6; font-size: 0.78rem; font-family: inherit; border-radius: 4px; cursor: pointer; }
+.fact-status.pending_client { background: #FEF3C7; color: #D97706; border: 1px solid #FDE68A; }
+
+.fact-add-offer { padding: 0.85rem 1.1rem; border-top: 1px solid #F0EEE9; background: #FAFAF9; }
+.fact-add-offer-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 0.5rem; margin: 0.5rem 0 0.6rem; }
+.fact-add-offer-grid label { font-size: 0.6rem; color: #aaa; display: block; margin-bottom: 0.2rem; }
+.fact-add-offer-grid input { width: 100%; padding: 0.32rem 0.5rem; background: #fff; border: 1px solid #DDDBD6; color: #1A1A1A; font-size: 0.78rem; font-family: inherit; border-radius: 3px; }
+.btn-add-offer-btn { padding: 0.42rem 0.85rem; background: #fff; color: #555; border: 1px solid #DDDBD6; font-size: 0.72rem; font-family: inherit; border-radius: 3px; cursor: pointer; transition: all 0.15s; }
+.btn-add-offer-btn:hover { border-color: #999; color: #1A1A1A; }
+.fact-offer.declined { opacity: 0.4; }
+.fact-status.sent { background: #FFF7ED; color: #C2410C; border: 1px solid #FED7AA; }
+.fact-status.draft { background: #F9FAFB; color: #6B7280; border: 1px solid #E5E7EB; }
+
+.fact-simulator-hint {
+  font-size: 0.7rem; color: #bbb; font-style: italic; padding: 0.6rem 1.1rem;
+  border-top: 1px solid #F0EEE9;
+}
+
+/* ── AUTH ── */
+#auth-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: #F5F4F1; display: flex; align-items: center; justify-content: center;
+}
+.auth-box {
+  background: #fff; border: 1px solid #E4E2DC; border-radius: 10px;
+  padding: 2rem 2.5rem; width: 360px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.10);
+}
+.auth-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 1.5rem; }
+.auth-logo span { font-size: 0.95rem; font-weight: 500; color: #333; }
+.auth-title { font-size: 1.1rem; font-weight: 600; color: #1A1A1A; margin-bottom: 0.3rem; }
+.auth-sub { font-size: 0.75rem; color: #aaa; margin-bottom: 1.25rem; }
+.auth-field { margin-bottom: 0.75rem; }
+.auth-field label { display: block; font-size: 0.65rem; color: #888; margin-bottom: 0.25rem; }
+.auth-field input {
+  width: 100%; padding: 0.5rem 0.7rem;
+  border: 1px solid #DDDBD6; border-radius: 4px;
+  font-size: 0.85rem; font-family: inherit; color: #1A1A1A;
+  transition: border-color 0.15s;
+}
+.auth-field input:focus { outline: none; border-color: #999; }
+.auth-error { font-size: 0.7rem; color: #C0001A; margin-bottom: 0.6rem; min-height: 1rem; }
+.auth-btn {
+  width: 100%; padding: 0.65rem; background: #1A1A1A; color: #fff;
+  border: none; border-radius: 4px; font-size: 0.85rem; font-family: inherit;
+  cursor: pointer; margin-bottom: 0.5rem; transition: background 0.15s;
+}
+.auth-btn:hover { background: #333; }
+.auth-link { font-size: 0.7rem; color: #7A6AAA; cursor: pointer; text-decoration: underline; text-align: center; display: block; }
+.auth-divider { border: none; border-top: 1px solid #F0EEE9; margin: 1rem 0; }
+
+/* Admin user management panel */
+.admin-users-panel {
+  background: #fff; border: 1px solid #E4E2DC; border-radius: 6px;
+  padding: 1rem 1.25rem; margin-bottom: 1rem;
+}
+.admin-users-title { font-size: 0.65rem; color: #aaa; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.75rem; }
+.user-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid #F5F4F1; font-size: 0.78rem; }
+.user-row:last-child { border-bottom: none; }
+.user-role-badge { font-size: 0.6rem; padding: 0.15rem 0.5rem; border-radius: 10px; font-weight: 500; }
+.user-role-badge.admin { background: #F5F3FF; color: #7C3AED; }
+.user-role-badge.user { background: #F0FDF4; color: #059669; }
+.btn-delete-user { background: none; border: none; color: #ddd; cursor: pointer; font-size: 13px; margin-left: auto; }
+.btn-delete-user:hover { color: #C0001A; }
+
+</style>
+</head>
+<body>
+
+<!-- AUTH OVERLAY -->
+<div id="auth-overlay" style="position:fixed;inset:0;z-index:1000;background:#F5F4F1;display:none;align-items:center;justify-content:center;">
+  <div class="auth-box" id="auth-login-box">
+    <div class="auth-logo">
+      <div class="ch-badge" style="width:24px;height:24px;flex-shrink:0;"><svg viewBox="0 0 12 12" fill="white" width="13" height="13"><rect x="4.5" y="0" width="3" height="12"/><rect x="0" y="4.5" width="12" height="3"/></svg></div>
+      <span>QR-Rechnung · Brand Agent GmbH</span>
+    </div>
+    <div class="auth-title">Willkommen</div>
+    <div class="auth-sub">Bitte melden Sie sich an um fortzufahren.</div>
+    <div class="auth-error" id="login-error"></div>
+    <div class="auth-field"><label>E-Mail</label><input type="email" id="login-email" placeholder="ihre@email.ch" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <div class="auth-field"><label>Passwort</label><input type="password" id="login-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="auth-btn" onclick="doLogin()">Anmelden</button>
+    <span class="auth-link" onclick="showRegister()">Noch kein Konto? Registrieren</span>
+  </div>
+  <div class="auth-box" id="auth-register-box" style="display:none;">
+    <div class="auth-logo">
+      <div class="ch-badge" style="width:24px;height:24px;flex-shrink:0;"><svg viewBox="0 0 12 12" fill="white" width="13" height="13"><rect x="4.5" y="0" width="3" height="12"/><rect x="0" y="4.5" width="12" height="3"/></svg></div>
+      <span>QR-Rechnung · Brand Agent GmbH</span>
+    </div>
+    <div class="auth-title">Konto erstellen</div>
+    <div class="auth-sub">Zugang für Workflow und Factoring.</div>
+    <div class="auth-error" id="register-error"></div>
+    <div class="auth-field"><label>Name</label><input type="text" id="reg-name" placeholder="Max Muster"></div>
+    <div class="auth-field"><label>E-Mail</label><input type="email" id="reg-email" placeholder="ihre@email.ch"></div>
+    <div class="auth-field"><label>Passwort</label><input type="password" id="reg-password" placeholder="min. 6 Zeichen"></div>
+    <div class="auth-field"><label>Passwort bestätigen</label><input type="password" id="reg-password2" placeholder="••••••••" onkeydown="if(event.key==='Enter')doRegister()"></div>
+    <button class="auth-btn" onclick="doRegister()">Konto erstellen</button>
+    <span class="auth-link" onclick="showLogin()">Bereits registriert? Anmelden</span>
+  </div>
+</div>
+
+<div class="tab-bar">
+  <div class="ch-badge" style="margin:auto 0.5rem auto 0;"><svg viewBox="0 0 12 12" fill="white"><rect x="4.5" y="0" width="3" height="12"/><rect x="0" y="4.5" width="12" height="3"/></svg></div>
+  <div class="tab active" onclick="switchTab('editor')">Rechnung erstellen</div>
+  <div class="tab" onclick="switchTab('workflow')">Workflow</div>
+  <div class="tab" onclick="switchTab('factoring')">Factoring</div>
+</div>
+
+<!-- EDITOR VIEW -->
+<div id="view-editor" class="view active">
+  <div class="sidebar">
+    <div class="sidebar-logo">
+      <div style="font-size:0.88rem;font-weight:500;color:#333;letter-spacing:0.03em;">QR-Rechnung Generator</div>
+      <div style="font-size:0.65rem;color:#bbb;margin-top:0.15rem;">powered by Brand Agent GmbH</div>
+    </div>
+    <div class="sidebar-body">
+
+      <div class="group">
+        <div class="group-header">Absender</div>
+        <div class="group-body">
+          <div class="row c1"><div class="f"><label>Firmenname</label><input id="s-name" value="Brand Agent GmbH"></div></div>
+          <div class="row c1"><div class="f"><label>Strasse + Nr.</label><input id="s-street" value="Hammerstrasse 5"></div></div>
+          <div class="row c2">
+            <div class="f"><label>PLZ</label><input id="s-zip" value="6312"></div>
+            <div class="f"><label>Ort</label><input id="s-city" value="Steinhausen"></div>
+          </div>
+          <div class="row c1"><div class="f"><label>IBAN</label><input id="iban" value="CH49 8080 8009 8529 2175 9" oninput="fmtIban(this)"></div></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-header">Empfänger</div>
+        <div class="group-body">
+          <div class="row c1"><div class="f"><label>Firma / Name</label><input id="d-name" value="Autobörse24 AG"></div></div>
+          <div class="row c1"><div class="f"><label>Strasse + Nr.</label><input id="d-street" value="Rigiweg 1"></div></div>
+          <div class="row c2">
+            <div class="f"><label>PLZ</label><input id="d-zip" value="6343"></div>
+            <div class="f"><label>Ort</label><input id="d-city" value="Holzhäusern"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-header">Rechnungsdetails</div>
+        <div class="group-body">
+          <div class="row c1"><div class="f"><label>Rechnungsnummer</label><input id="inv-nr" value=""></div></div>
+          <div class="row c2">
+            <div class="f"><label>Datum</label><input type="date" id="inv-date" value=""></div>
+            <div class="f"><label>Zahlbar bis</label><input type="date" id="inv-due" value=""></div>
+          </div>
+          <div class="row c2">
+            <div class="f"><label>Währung</label><select id="inv-cur"><option value="CHF" selected>CHF</option><option value="EUR">EUR</option></select></div>
+            <div class="f"><label>MwSt (%)</label><input type="number" id="mwst" value="0" min="0" max="100" step="0.1"></div>
+          </div>
+          <div class="row c1"><div class="f"><label>Zusätzliche Informationen</label><input id="addinfo" value="" placeholder="Optional"></div></div>
+        </div>
+      </div>
+
+        <div class="group">
+          <div class="group-header">Positionen</div>
+          <div class="group-body">
+            <div id="pos-list"></div>
+            <button class="btn-add" onclick="addPos()">+ Position hinzufügen</button>
+          </div>
+        </div>
+
+    </div>
+    <div class="sidebar-footer">
+      <div class="btn-row">
+        <button class="btn-tpl" id="btn-save" onclick="saveTemplate()">&#9632; Vorlage speichern</button>
+        <button class="btn-tpl" id="btn-load" onclick="loadTemplate()">&#9654; Vorlage laden</button>
+      </div>
+      <button class="btn-pdf" onclick="exportPDF()" style="margin-bottom:0.4rem;">&#8595; PDF herunterladen</button>
+      <button class="btn-tpl" onclick="addToYear()" style="width:100%;padding:0.55rem;border-color:#4A7AAA;color:#4A7AAA;font-size:0.75rem;">&#43; Zu Workflow hinzufügen</button>
+      <button class="btn-tpl" onclick="addToFactoring()" style="width:100%;padding:0.55rem;margin-top:0.4rem;border-color:#7A6AAA;color:#7A6AAA;font-size:0.75rem;" id="btn-factoring">&#43; Zu Factoring hinzufügen</button>
+    </div>
+  </div>
+
+  <div class="preview-area">
+    <div class="preview-label">Vorschau · A4</div>
+    <div class="a4" id="a4">
+      <div class="inv-head">
+        <div class="inv-sender">
+          <div class="company" id="p-s-name"></div>
+          <div id="p-s-street"></div>
+          <div id="p-s-loc"></div>
+        </div>
+      </div>
+      <div class="inv-to">
+        <div class="to-name" id="p-d-name"></div>
+        <div class="to-addr"><span id="p-d-street"></span><br><span id="p-d-loc"></span></div>
+      </div>
+      <div class="inv-ref">
+        <div class="inv-title">Rechnung <span id="p-inv-nr"></span></div>
+        <div class="meta-row">Datum: <span id="p-inv-date"></span></div>
+        <div class="meta-row">Zahlbar bis: <span id="p-inv-due"></span></div>
+      </div>
+      <div class="inv-table-wrap">
+        <table class="inv-table">
+          <thead><tr>
+            <th class="desc" style="width:14px"></th>
+            <th class="desc">Beschreibung</th>
+            <th style="width:20mm;text-align:right;">Einheit</th>
+            <th style="width:18mm;text-align:right;">Menge</th>
+            <th style="width:36mm;text-align:right;">Betrag</th>
+          </tr></thead>
+          <tbody id="p-tbody"></tbody>
+        </table>
+      </div>
+      <div class="inv-totals">
+        <div class="totals-block">
+          <div class="tot-row"><span>Total netto</span><span id="p-net"></span></div>
+          <div class="tot-row"><span id="p-mwst-lbl">MWST</span><span id="p-mwst"></span></div>
+          <div class="tot-row total"><span>Total inkl.</span><span id="p-total"></span></div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <hr class="slip-sep"><div class="slip-scissors">✂</div>
+      <div class="slip">
+        <div class="slip-receipt">
+          <div class="slip-block-title">Empfangsschein</div>
+          <div class="sf"><div class="sf-lbl">Konto / Zahlbar an</div><div class="sf-val" id="r-konto"></div></div>
+          
+          <div class="sf"><div class="sf-lbl">Zahlbar durch</div><div class="sf-val" id="r-debt"></div></div>
+          <div class="slip-ca">
+            <div class="slip-ca-col"><label>Währung</label><div class="v" id="r-cur">CHF</div></div>
+            <div class="slip-ca-col"><label>Betrag</label><div class="v" id="r-amt"></div></div>
+          </div>
+          <div class="slip-accept">Annahmestelle</div>
+        </div>
+        <div class="slip-div-col" style="writing-mode:vertical-rl;font-size:13px;color:#C5C3BD;">✂</div>
+        <div class="slip-payment">
+          <div class="slip-block-title">Zahlteil</div>
+          <div class="slip-pay-grid">
+            <div>
+              <div id="qr-preview"></div>
+              <div class="slip-ca" style="margin-top:2mm;">
+                <div class="slip-ca-col"><label>Währung</label><div class="v" id="p-cur2"></div></div>
+                <div class="slip-ca-col"><label>Betrag</label><div class="v" id="p-amt2"></div></div>
+              </div>
+            </div>
+            <div>
+              <div class="sf"><div class="sf-lbl">Konto / Zahlbar an</div><div class="sf-val" id="p-konto"></div></div>
+              
+              <div class="sf"><div class="sf-lbl">Zusätzliche Informationen</div><div class="sf-val" id="p-addinfo"></div></div>
+              <div class="sf"><div class="sf-lbl">Zahlbar durch</div><div class="sf-val" id="p-debt"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- WORKFLOW VIEW -->
+<div id="view-workflow" class="view">
+  <div class="year-header">
+    <div>
+      <h2 id="workflow-title">Workflow</h2>
+      <div class="year-note" id="workflow-note"></div>
+    </div>
+
+  </div>
+  <div class="workflow-body">
+    <div class="workflow-main" id="workflow-grid"></div>
+    <div class="history-panel" id="history-panel">
+      <div class="history-panel-title">Bezahlt</div>
+      <div id="history-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- FACTORING VIEW -->
+<div id="view-factoring" class="view">
+
+  <!-- LOGIN SCREEN -->
+  <div id="fact-login" class="fact-login-screen">
+    <div class="fact-login-box">
+      <div class="fact-login-logo">
+        <div class="ch-badge" style="width:28px;height:28px;"><svg viewBox="0 0 12 12" fill="white" width="14" height="14"><rect x="4.5" y="0" width="3" height="12"/><rect x="0" y="4.5" width="12" height="3"/></svg></div>
+        <span>Factoring Marktplatz</span>
+      </div>
+      <div class="fact-login-title">Anmelden</div>
+      <div class="fact-login-error" id="fact-login-error"></div>
+      <div class="f" style="margin-bottom:0.6rem;">
+        <label style="font-size:0.65rem;color:#888;display:block;margin-bottom:0.3rem;">E-Mail Adresse</label>
+        <input id="fact-username" type="email" placeholder="ihre@email.ch" style="width:100%;padding:0.55rem 0.75rem;border:1px solid #DDDBD6;border-radius:4px;font-size:0.88rem;font-family:inherit;">
+      </div>
+      <div class="f" style="margin-bottom:1rem;">
+        <label style="font-size:0.65rem;color:#888;display:block;margin-bottom:0.3rem;">Passwort</label>
+        <input id="fact-password" type="password" placeholder="••••••" style="width:100%;padding:0.55rem 0.75rem;border:1px solid #DDDBD6;border-radius:4px;font-size:0.88rem;font-family:inherit;" onkeydown="if(event.key==='Enter')doFactLogin()">
+      </div>
+      <button onclick="doFactLogin()" style="width:100%;padding:0.65rem;background:#1A1A1A;color:#fff;border:none;border-radius:4px;font-size:0.88rem;font-family:inherit;cursor:pointer;">Anmelden</button>
+      <div style="font-size:0.65rem;color:#bbb;margin-top:1rem;text-align:center;">Zugangsdaten erhalten Sie von Brand Agent GmbH</div>
+    </div>
+  </div>
+
+  <!-- CLIENT VIEW -->
+  <div id="fact-client-view" style="display:none;">
+    <div class="factoring-header">
+      <div>
+        <h2 id="fact-client-greeting">Meine Rechnungen</h2>
+        <div class="factoring-note" id="factoring-note"></div>
+      </div>
+      <button class="fact-logout-btn" onclick="factLogout()">Abmelden</button>
+    </div>
+    <div class="fact-cards-grid" id="factoring-grid"></div>
+  </div>
+
+  <!-- ADMIN VIEW -->
+  <div id="fact-admin-view" style="display:none;">
+    <div class="factoring-header">
+      <div>
+        <h2>Factoring Admin</h2>
+        <div class="factoring-note" id="factoring-admin-note"></div>
+      </div>
+      <button class="fact-logout-btn" onclick="factLogout()">Abmelden</button>
+    </div>
+    <div class="fact-cards-grid" id="factoring-admin-grid"></div>
+  </div>
+
+</div>
+
+<script>
+function generateInvNr() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const stored = parseInt(localStorage.getItem('inv-counter') || '62');
+  const next = stored + 1;
+  localStorage.setItem('inv-counter', String(next));
+  return year + '-' + String(next).padStart(4, '0');
+}
+
+function currentPeriode(date) {
+  return (date||new Date()).toLocaleDateString('de-CH', { month: 'long', year: 'numeric' });
+}
+
+let positions = [{ desc: 'Smart Video Agent', einheit: 'Stk.', menge: 1, price: 99.00 }];
+let savedTemplate = null;
+let yearTemplates = []; // list of saved templates for year view
+
+function saveWorkflowEmails() {
+  try {
+    var emails = yearTemplates.map(function(t){ return { invNr: t.fields['inv-nr'], dEmail: t.dEmail||'' }; });
+    localStorage.setItem('wf_emails', JSON.stringify(emails));
+  } catch(e) {}
+}
+
+function loadWorkflowEmails() {
+  try {
+    var stored = JSON.parse(localStorage.getItem('wf_emails') || '[]');
+    stored.forEach(function(s) {
+      var tpl = yearTemplates.find(function(t){ return t.fields['inv-nr'] === s.invNr; });
+      if (tpl && s.dEmail) tpl.dEmail = s.dEmail;
+    });
+  } catch(e) {}
+}
+
+function addToYear() {
+  if (!requireAuth('workflow')) return;
+  const fields=['s-name','s-street','s-zip','s-city','d-name','d-street','d-zip','d-city','inv-nr','inv-cur','mwst','iban','addinfo'];
+  const tpl={fields:{},positions:positions.map(function(p){return Object.assign({},p);}),
+    sEmail:'',sSignature:'',dEmail:''};
+  fields.forEach(function(id){tpl.fields[id]=g(id);});
+  const idx=yearTemplates.findIndex(function(t){return t.fields['d-name']===tpl.fields['d-name'];});
+  if(idx>=0){
+    tpl.sEmail=yearTemplates[idx].sEmail||'';
+    tpl.sSignature=yearTemplates[idx].sSignature||'';
+    tpl.dEmail=yearTemplates[idx].dEmail||'';
+    yearTemplates[idx]=tpl;
+  } else { yearTemplates.push(tpl); }
+  const btn=event.target;
+  btn.textContent='✓ Hinzugefügt'; btn.style.color='#4A8A4A'; btn.style.borderColor='#4A8A4A';
+  setTimeout(function(){btn.innerHTML='&#43; Zu Workflow hinzufügen';btn.style.color='';btn.style.borderColor='';},2000);
+}
+
+function switchTab(tab) {
+  // Auth checked per action, not per tab
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
+  document.querySelector('.tab[onclick*="' + tab + '"]').classList.add('active');
+  document.getElementById('view-' + tab).classList.add('active');
+  if (tab === 'workflow') { renderWorkflow(); renderHistory(); var ac=document.getElementById('admin-users-container'); if(currentUser&&currentUser.role==='admin'){ac.style.display='';renderUserManagement();}else{ac.style.display='none';} }
+  if (tab === 'factoring') initFactoringTab();
+}
+
+function fmtIban(el) {
+  let v = el.value.replace(/\s/g,'').toUpperCase();
+  el.value = v.match(/.{1,4}/g)?.join(' ') || v;
+}
+function g(id) { return (document.getElementById(id)?.value || '').trim(); }
+function fmtDate(s) {
+  if (!s) return '–';
+  const d = new Date(s + 'T00:00:00');
+  return d.toLocaleDateString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function fmtDateObj(d) {
+  return d.toLocaleDateString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function cfmt(n, cur) {
+  return cur + ' ' + n.toLocaleString('de-CH',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+function set(id, val) { const el=document.getElementById(id); if(el) el.textContent=val; }
+function setHTML(id, val) { const el=document.getElementById(id); if(el) el.innerHTML=val; }
+
+function renderEditor() {
+  const list = document.getElementById('pos-list');
+  if (!list) return;
+  list.innerHTML = '';
+  positions.forEach(function(p, i) {
+    const div = document.createElement('div');
+    div.className = 'pos-item';
+    div.innerHTML =
+      '<div class="pos-item-num">#'+(i+1)+'</div>'+
+      (positions.length>1?'<button class="pos-del" onclick="delPos('+i+')">×</button>':'')+
+      '<div class="pos-item-label">Beschreibung</div>'+
+      '<input value="'+(p.desc||'')+'" placeholder="Beschreibung eingeben" onchange="positions['+i+'].desc=this.value;update()">'+
+      '<div class="pos-item-row" style="margin-top:0.4rem;">'+
+        '<div>'+
+          '<div class="pos-item-label">Einheit</div>'+
+          '<input value="'+(p.einheit||'Stk.')+'" placeholder="Stk." onchange="positions['+i+'].einheit=this.value;update()">'+
+        '</div>'+
+        '<div>'+
+          '<div class="pos-item-label">Menge</div>'+
+          '<input type="number" value="'+(p.menge||1)+'" step="1" min="0" onchange="positions['+i+'].menge=parseFloat(this.value)||0;update()" style="text-align:right;">'+
+        '</div>'+
+        '<div>'+
+          '<div class="pos-item-label">Betrag</div>'+
+          '<input type="number" value="'+p.price+'" step="0.01" onchange="positions['+i+'].price=parseFloat(this.value)||0;update()" style="text-align:right;">'+
+        '</div>'+
+      '</div>';
+    list.appendChild(div);
+  });
+}
+
+function syncPrice() {
+  var val = parseFloat(document.getElementById('inv-price').value) || 0;
+  if (positions.length > 0) { positions[0].price = val; renderEditor(); update(); }
+}
+
+function addPos() { positions.push({ desc: '', einheit: 'Stk.', menge: 1, price: 0 }); renderEditor(); update(); }
+function delPos(i) { if (positions.length > 1) { positions.splice(i,1); renderEditor(); update(); } }
+
+function buildQR(cur, total, iban, sName, sStreet, sZip, sCity, dName, dStreet, dZip, dCity, ref, addinfo) {
+  const ic=iban.replace(/\s/g,''), rc=ref.replace(/\s/g,'');
+  const rt=rc.startsWith('RF')?'SCOR':rc.length>0?'QRR':'NON';
+  return ['SPC','0200','1',ic,'S',sName,sStreet,'',sZip,sCity,'CH','','','','','','',
+    total.toFixed(2),cur,'S',dName,dStreet,'',dZip,dCity,'CH',rt,rc,addinfo,'EPD',''].join('\n');
+}
+function makeQR(text) {
+  const el = document.getElementById('qr-preview');
+  el.innerHTML = '';
+  try {
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    const n = qr.getModuleCount();
+    const size = 151;
+    const cell = size / n;
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + ' ' + size + '" style="display:block;width:40mm;height:40mm;">';
+    svg += '<rect width="' + size + '" height="' + size + '" fill="white"/>';
+    for (var r = 0; r < n; r++) {
+      for (var c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) {
+          svg += '<rect x="' + (c * cell).toFixed(2) + '" y="' + (r * cell).toFixed(2) + '" width="' + cell.toFixed(2) + '" height="' + cell.toFixed(2) + '" fill="black"/>';
+        }
+      }
+    }
+    svg += '</svg>';
+    el.innerHTML = svg;
+  } catch(e) { console.log('QR preview error:', e); }
+}
+
+function update() {
+  const cur=g('inv-cur')||'CHF';
+  const sName=g('s-name'),sStreet=g('s-street'),sZip=g('s-zip'),sCity=g('s-city');
+  const dName=g('d-name'),dStreet=g('d-street'),dZip=g('d-zip'),dCity=g('d-city');
+  const iban=g('iban'),ref='',addinfo=g('addinfo');
+  const mwstRate=parseFloat(document.getElementById('mwst').value)||0;
+  const net=positions.reduce(function(s,p){return s+p.price;},0);
+  const mwstAmt=net*mwstRate/100, total=net+mwstAmt;
+  const totalFmt=total.toLocaleString('de-CH',{minimumFractionDigits:2});
+
+  set('p-s-name',sName); set('p-s-street',sStreet);
+  set('p-s-loc',[sZip,sCity].filter(Boolean).join(' '));
+  set('p-inv-nr',g('inv-nr'));
+  set('p-inv-date',fmtDate(g('inv-date')));
+  set('p-inv-due',fmtDate(g('inv-due')));
+  set('p-d-name',dName); set('p-d-street',dStreet);
+  set('p-d-loc',[dZip,dCity].filter(Boolean).join(' '));
+
+  const tb=document.getElementById('p-tbody'); tb.innerHTML='';
+  positions.forEach(function(p,i){
+    const tr=document.createElement('tr');
+    tr.innerHTML='<td class="pos">'+(i+1)+'</td><td class="desc">'+(p.desc||'–')+'</td><td style="text-align:right;">'+(p.einheit||'Stk.')+'</td><td style="text-align:right;">'+(p.menge||1)+'</td><td style="text-align:right;">'+cfmt(p.price,cur)+'</td>';
+    tb.appendChild(tr);
+  });
+
+  set('p-net',cfmt(net,cur));
+  set('p-mwst-lbl','MWST'+(mwstRate>0?' '+mwstRate+'%':''));
+  set('p-mwst',cfmt(mwstAmt,cur));
+  set('p-total',cfmt(total,cur));
+
+  const kredLine=iban+'\n'+sName+'\n'+sStreet+'\nCH-'+sZip+' '+sCity;
+  const debtLine=dName?dName+'\n'+dStreet+'\nCH-'+dZip+' '+dCity:'–';
+  ['r-konto','p-konto'].forEach(function(id){setHTML(id,kredLine.replace(/\n/g,'<br>'));});
+  ['r-ref','p-ref'].forEach(function(id){set(id,'');});
+  ['r-debt','p-debt'].forEach(function(id){setHTML(id,debtLine.replace(/\n/g,'<br>'));});
+  ['r-cur','p-cur2'].forEach(function(id){set(id,cur);});
+  ['r-amt','p-amt2'].forEach(function(id){set(id,totalFmt);});
+  set('p-addinfo',addinfo||'–');
+  makeQR(buildQR(cur,total,iban,sName,sStreet,sZip,sCity,dName,dStreet,dZip,dCity,ref,addinfo));
+}
+
+function saveTemplate() {
+  const fields=['s-name','s-street','s-zip','s-city','d-name','d-street','d-zip','d-city','d-email','inv-nr','inv-cur','mwst','iban','addinfo'];
+  savedTemplate={fields:{},positions:positions.map(function(p){return Object.assign({},p);})};
+  fields.forEach(function(id){savedTemplate.fields[id]=g(id);});
+  const btn=document.getElementById('btn-save');
+  btn.textContent='✓ Gespeichert'; btn.classList.add('saved');
+  setTimeout(function(){btn.innerHTML='&#9632; Vorlage speichern';btn.classList.remove('saved');},2000);
+}
+
+function loadTemplate() {
+  if(!savedTemplate){alert('Keine Vorlage gespeichert.');return;}
+  const fields=['s-name','s-street','s-zip','s-city','d-name','d-street','d-zip','d-city','d-email','inv-nr','inv-cur','mwst','iban','addinfo'];
+  fields.forEach(function(id){const el=document.getElementById(id);if(el)el.value=savedTemplate.fields[id]||'';});
+  const now=new Date(), y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,'0');
+  const lastDay=new Date(y,now.getMonth()+1,0).getDate();
+  document.getElementById('inv-date').value=y+'-'+m+'-01';
+  document.getElementById('inv-due').value=y+'-'+m+'-'+lastDay;
+  document.getElementById('inv-nr').value=generateInvNr();
+  const periode=currentPeriode();
+  positions=savedTemplate.positions.map(function(p){return Object.assign({},p,{periode:periode});});
+  renderEditor(); update();
+  const btn=document.getElementById('btn-load');
+  btn.textContent='✓ Geladen';
+  setTimeout(function(){btn.innerHTML='&#9654; Vorlage laden';},2000);
+}
+
+let paidHistory = [];
+
+function toggleHistory() {
+  historyOpen = !historyOpen;
+  const panel = document.getElementById('history-panel');
+  if (historyOpen) panel.classList.add('open'); else panel.classList.remove('open');
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = document.getElementById('history-list');
+  if (paidHistory.length === 0) {
+    list.innerHTML = '<div style="padding:0.85rem;font-size:0.65rem;color:#ccc;text-align:center;">Noch keine bezahlten Rechnungen</div>';
+    return;
+  }
+  list.innerHTML = paidHistory.map(function(h) {
+    return '<div class="history-item">'
+      +'<div style="min-width:0;flex:1;">'
+        +'<div class="hi-name">'+h.customer+'</div>'
+        +'<div class="hi-meta">'+h.invNr+' · '+h.periode+'</div>'
+      +'</div>'
+      +'<div class="hi-meta" style="white-space:nowrap;font-weight:500;color:#555;text-align:right;">'+h.amount+'</div>'
+      +'</div>';
+  }).join('');
+}
+
+function markPaid(ti, i, refYear, refMonth, cbEl) {
+  var tpl = yearTemplates[ti]; if (!tpl) return;
+  if (!tpl.paidMonths) tpl.paidMonths = {};
+  var key = refYear + '-' + String(refMonth + i + 1).padStart(2,'0');
+  tpl.paidMonths[key] = cbEl.checked;
+
+  if (cbEl.checked) {
+    var md = getMonthDataDirect(ti, i, refYear, refMonth);
+    if (md) {
+      var net = md.positions.reduce(function(s,p){return s+p.price;},0);
+      var total = net*(1+md.mwstRate/100);
+      // Check if due date has passed
+      var dueDate = new Date(refYear, refMonth + i + 1, 0); // last day of invoice month
+      var now = new Date();
+      if (dueDate < now) {
+        // Due date passed → move to history immediately
+        paidHistory.unshift({
+          customer: tpl.fields['d-name'], invNr: md.invNr,
+          periode: md.periode, amount: cfmt(total, md.cur),
+          paidKey: key, ti: ti
+        });
+      }
+      // If due date not yet passed: stays visible as green ✓, will move to history later
+    }
+  } else {
+    paidHistory = paidHistory.filter(function(h){ return h.paidKey !== key; });
+  }
+  renderWorkflow();
+  var panel = document.getElementById('history-panel');
+  if (panel.classList.contains('open')) renderHistory();
+}
+
+function toggleOneTime(ti) {
+  var tpl = yearTemplates[ti]; if (!tpl) return;
+  tpl.oneTime = !tpl.oneTime;
+  renderWorkflow();
+}
+
+function deleteCustomer(ti) {
+  if (confirm('Kunden-Workflow löschen?')) {
+    yearTemplates.splice(ti, 1);
+    renderWorkflow();
+  }
+}
+
+// Drag-and-drop reordering
+let dragSrcIdx = null;
+function onDragStart(e, idx) { dragSrcIdx = idx; e.dataTransfer.effectAllowed='move'; }
+function onDragOver(e, idx) { e.preventDefault(); }
+function onDrop(e, idx) {
+  e.preventDefault();
+  if (dragSrcIdx === null || dragSrcIdx === idx) return;
+  const moved = yearTemplates.splice(dragSrcIdx, 1)[0];
+  yearTemplates.splice(idx, 0, moved);
+  dragSrcIdx = null;
+  renderWorkflow();
+}
+
+
+function renderWorkflow() {
+  loadWorkflowEmails();
+  const grid = document.getElementById('workflow-grid');
+  const note = document.getElementById('workflow-note');
+  if (yearTemplates.length === 0) {
+    note.textContent = '';
+    grid.innerHTML = '<div class="year-empty">Rechnung erstellen → «Zu Workflow hinzufügen» klicken.</div>';
+    return;
+  }
+  note.textContent = yearTemplates.length + ' Kunde' + (yearTemplates.length > 1 ? 'n' : '');
+  grid.innerHTML = '';
+  const now = new Date();
+  const curYear = now.getFullYear(), curMonth = now.getMonth();
+
+  yearTemplates.forEach(function(tpl, ti) {
+    const cur = tpl.fields['inv-cur'] || 'CHF';
+    const mwstRate = parseFloat(tpl.fields['mwst']) || 0;
+    const net = tpl.positions.reduce(function(s,p){return s+p.price;}, 0);
+    const total = net * (1 + mwstRate / 100);
+    const baseNr = tpl.fields['inv-nr'] || '';
+    const nrParts = baseNr.match(/^(.*?)(\d+)$/);
+    if (!tpl.paidMonths) tpl.paidMonths = {};
+
+    const row = document.createElement('div');
+    row.className = 'customer-row';
+    row.draggable = true;
+    row.ondragstart = function(e){ onDragStart(e, ti); };
+    row.ondragover = function(e){ onDragOver(e, ti); };
+    row.ondrop = function(e){ onDrop(e, ti); };
+
+    // Current month paid?
+    var curKey = curYear + '-' + String(curMonth + 1).padStart(2,'0');
+    var curPaid = !!tpl.paidMonths[curKey];
+
+    // Build 2 cards: current + next
+    var cardsHTML = '<div class="customer-cards">';
+    for (var i = 0; i < 2; i++) {
+      const d = new Date(curYear, curMonth + i, 1);
+      const invDate = fmtDateObj(d);
+      const periode = currentPeriode(d);
+      var invNr = baseNr;
+      if (nrParts) invNr = nrParts[1] + String(parseInt(nrParts[2]) + i).padStart(nrParts[2].length, '0');
+      var monthKey = curYear + '-' + String(curMonth + i + 1).padStart(2,'0');
+      var isPaid = !!tpl.paidMonths[monthKey];
+      var cbId = 'paid-' + ti + '-' + i;
+      // Next month: no dimming, but show a subtle "Bereit" top badge
+      var isNext = (i === 1);
+      if (isNext && tpl.oneTime) { cardsHTML += ''; continue; }
+      var dueDate = new Date(curYear, curMonth + i + 1, 0); // last day of invoice month
+      var isOverdue = !isPaid && dueDate < now;
+      var dueFmt = String(dueDate.getDate()).padStart(2,'0') + '.' + String(dueDate.getMonth()+1).padStart(2,'0') + '.' + dueDate.getFullYear();
+      var cardCls = isPaid ? ' paid-card' : isOverdue ? ' overdue-card' : '';
+
+      cardsHTML +=
+        '<div class="month-card' + cardCls + '" style="position:relative;">' +
+        (isNext && !isPaid && !isOverdue ? '<div class="next-badge">Bereit</div>' : '') +
+        (isOverdue ? '<div class="next-badge" style="background:#FEE2E2;color:#C0001A;border-color:#FECACA;border-radius:0 6px 0 4px;">Fällig</div>' : '') +
+          '<div class="card-left">' +
+            '<div class="card-date">' + invDate + '</div>' +
+            '<div style="font-size:0.6rem;color:#bbb;margin-bottom:0.1rem;">' + invNr + '</div>' +
+            '<div class="card-periode">' + periode + '</div>' +
+            '<div class="card-amount">' + cfmt(total, cur) + '</div>' +
+            '<div style="font-size:0.6rem;color:' + (isOverdue?'#C0001A':'#bbb') + ';margin-top:0.15rem;margin-bottom:0.25rem;">Fällig: ' + dueFmt + '</div>' +
+            '<div class="card-paid-row">' +
+              '<input type="checkbox" id="' + cbId + '" ' + (isPaid?'checked':'') + ' onchange="markPaid(' + ti + ',' + i + ',' + curYear + ',' + curMonth + ',this)">' +
+              '<label for="' + cbId + '" style="' + (isPaid?'color:#4A8A4A;font-weight:500;':'') + '">' + (isPaid?'✓ Bezahlt':'Bezahlt') + '</label>' +
+            '</div>' +
+          '</div>' +
+          '<div class="card-actions">' +
+            '<button class="btn-month-pdf" onclick="exportMonthPDFDirect(' + ti + ',' + i + ',' + curYear + ',' + curMonth + ')">' +
+              '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 1v7M3 6l3 3 3-3"/><path d="M1 10h10"/></svg>PDF' +
+            '</button>' +
+            '<button class="btn-month-mail" onclick="sendMonthMailDirect(' + ti + ',' + i + ',' + curYear + ',' + curMonth + ',this,false)">' +
+              '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2.5" width="10" height="7" rx="1"/><path d="M1 4l5 3.5L11 4"/></svg>Entwurf' +
+            '</button>' +
+            '<div style="height:1px;background:#F0EEE9;margin:0 0.4rem;"></div>' +
+            '<button class="btn-month-mail" onclick="sendMonthMailDirect(' + ti + ',' + i + ',' + curYear + ',' + curMonth + ',this,true)">' +
+              '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2v5M6 9v1" stroke-width="1.8"/><circle cx="6" cy="6" r="5"/></svg>Mahnung' +
+            '</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    cardsHTML += '</div>';
+
+    const seId = 'se-' + ti, ssId = 'ss-' + ti, deId = 'de-' + ti;
+    var mailHTML =
+      '<div class="customer-mail-fields" style="width:auto;min-width:280px;">' +
+        '<div><label>Empfänger E-Mail</label><input id="' + deId + '" value="' + (tpl.dEmail||'') + '" placeholder="kunde@firma.ch" onchange="yearTemplates[' + ti + '].dEmail=this.value; saveWorkflowEmails();" style="width:280px;"></div>' +
+      '</div>';
+
+    row.innerHTML =
+      '<div class="customer-row-header">' +
+        '<div class="drag-handle" title="Verschieben"><span></span><span></span><span></span></div>' +
+        '<span class="customer-row-name">' + tpl.fields['d-name'] + '</span>' +
+        '<div class="one-time-switch" style="margin-left:auto;">' +
+          '<span class="one-time-label" style="font-size:0.65rem;color:#aaa;">' + (tpl.oneTime?'Einmalig':'Monatlich') + '</span>' +
+          '<label class="switch" onclick="event.stopPropagation()">' +
+            '<input type="checkbox" ' + (tpl.oneTime?'checked':'') + ' onchange="toggleOneTime(' + ti + ')">' +
+            '<span class="switch-slider"></span>' +
+          '</label>' +
+        '</div>' +
+        '<span class="customer-row-meta">' + cfmt(total, cur) + (tpl.oneTime?' einmalig':' / Monat') + '</span>' +
+        '<button class="btn-delete-customer" onclick="deleteCustomer(' + ti + ')" title="Löschen">' +
+          '<svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 3.5h9M5 3.5V2.5h3v1M4 3.5l.5 7h4l.5-7"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="customer-row-body">' + cardsHTML + mailHTML + '</div>';
+
+    grid.appendChild(row);
+  });
+}
+
+
+function getMonthDataDirect(ti, i, refYear, refMonth) {
+  const tpl=yearTemplates[ti]; if(!tpl) return null;
+  const y=refYear||new Date().getFullYear();
+  const m=refMonth!==undefined?refMonth:new Date().getMonth();
+  const d=new Date(y,m+i,1);
+  const lastDay=new Date(y,m+i+1,0).getDate();
+  const baseNr=tpl.fields['inv-nr']||'';
+  const nrParts=baseNr.match(/^(.*?)(\d+)$/);
+  let invNr=baseNr;
+  if(nrParts) invNr=nrParts[1]+String(parseInt(nrParts[2])+i).padStart(nrParts[2].length,'0');
+  return {
+    tpl:tpl, cur:tpl.fields['inv-cur']||'CHF',
+    mwstRate:parseFloat(tpl.fields['mwst'])||0,
+    invDate:new Date(y,m+i,1),
+    dueDate:new Date(y,m+i,lastDay),
+    periode:currentPeriode(d), invNr:invNr,
+    positions:tpl.positions.map(function(p){return Object.assign({},p,{periode:currentPeriode(d)});})
+  };
+}
+
+async function exportMonthPDFDirect(ti, i, refYear, refMonth) {
+  const md=getMonthDataDirect(ti,i,refYear,refMonth); if(!md) return;
+  await buildAndSavePDF(md, md.invNr+'_'+md.periode.replace(/\s/g,'_'));
+}
+
+async function sendMonthMailDirect(ti, i, refYear, refMonth, btn, isMahnung) {
+  const md=getMonthDataDirect(ti,i,refYear,refMonth); if(!md) return;
+  const tpl=md.tpl;
+  const toEmail=tpl.dEmail||'';
+  const signature=tpl.sSignature||('Freundliche Grüsse\n'+tpl.fields['s-name']);
+  const total=md.positions.reduce(function(s,p){return s+p.price;},0)*(1+(md.mwstRate/100));
+  const subject = (isMahnung ? 'MAHNUNG: ' : '') + 'Rechnung '+md.invNr+' – '+md.periode;
+  const bodyText = 'Guten Tag,\n\nwir hoffen, Sie sind wohlauf. Anbei finden Sie wie vereinbart Ihre aktuelle Rechnung von Brand Agent GmbH.\n\nBei Fragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nFreundliche Grüsse\nBrand Agent GmbH';
+
+  if (isGmailConnected()) {
+    // Gmail API: generate PDF and attach
+    if(btn){btn.textContent='⏳ PDF…';btn.disabled=true;}
+    try {
+      const pdfBase64 = await buildPDFBase64(md);
+      const fileName = 'Rechnung_'+md.invNr+'.pdf';
+      await createGmailDraft(toEmail, subject, bodyText, pdfBase64, fileName);
+    } catch(e) {
+      console.error('Gmail draft error:', e);
+      alert('Fehler beim Erstellen des Entwurfs: '+e.message);
+    }
+    if(btn){btn.innerHTML='<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="2.5" width="10" height="7" rx="1"/><path d="M1 4l5 3.5L11 4"/></svg> Entwurf';btn.disabled=false;}
+  } else {
+    // Fallback: mailto without attachment
+    window.location.href='mailto:'+encodeURIComponent(toEmail)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(bodyText);
+  }
+}
+
+async function buildPDFBase64(md) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
+  await buildAndSavePDF(md, null, doc);
+  return doc.output('datauristring').split(',')[1];
+}
+
+
+async function buildAndSavePDF(md, fname, existingDoc) {
+  const { jsPDF }=window.jspdf;
+  const doc=existingDoc||new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+  const W=210,H=297,ml=14,mr=14;
+  const tpl=md.tpl, cur=md.cur;
+  const net=md.positions.reduce(function(s,p){return s+p.price;},0);
+  const mwstAmt=net*md.mwstRate/100, total=net+mwstAmt;
+  const totalFmt=total.toLocaleString('de-CH',{minimumFractionDigits:2});
+  const sName=tpl.fields['s-name'],sStreet=tpl.fields['s-street'],sZip=tpl.fields['s-zip'],sCity=tpl.fields['s-city'];
+  const dName=tpl.fields['d-name'],dStreet=tpl.fields['d-street'],dZip=tpl.fields['d-zip'],dCity=tpl.fields['d-city'];
+  const iban=tpl.fields['iban'],ref='',addinfo=tpl.fields['addinfo'];
+
+  const blk=[26,26,26],gry=[100,100,100],lgry=[225,222,216],wht=[255,255,255];
+  const sf=function(style,size,col){doc.setFont('helvetica',style||'normal');doc.setFontSize(size||9);doc.setTextColor(...(col||blk));};
+
+  // Absender oben rechts (inv-head padding-top 13mm)
+  sf('bold',11,blk); doc.text(sName,W-mr,13,{align:'right'});
+  sf('normal',8.5,gry);
+  let hy=18.5;
+  if(sStreet){doc.text(sStreet,W-mr,hy,{align:'right'});hy+=4.5;}
+  if(sZip||sCity){doc.text([sZip,sCity].filter(Boolean).join(' '),W-mr,hy,{align:'right'});}
+
+  // Empfaenger links, unter dem Absender-Block (inv-head pb=7mm, sender ~3 lines)
+  // Sender block ends at ~13+5+4.5+4.5+7 = ~34mm, inv-to starts there
+  var recipientY = 34;
+  sf('bold',9,blk); doc.text(dName,ml,recipientY);
+  sf('normal',8.5,gry);
+  let ry = recipientY + 5;
+  if(dStreet){doc.text(dStreet,ml,ry);ry+=4.5;}
+  if(dZip||dCity){doc.text([dZip,dCity].filter(Boolean).join(' '),ml,ry);ry+=4.5;}
+
+  // Rechnungstitel: inv-to pb=5mm + inv-ref pt=14mm = 19mm after recipient block
+  ry += 19;
+  sf('bold',13,blk); doc.text('Rechnung '+md.invNr,ml,ry); ry+=7;
+  sf('normal',8,gry); doc.text('Datum: ',ml,ry); sf('normal',8,blk); doc.text(fmtDateObj(md.invDate),ml+14,ry); ry+=5;
+  sf('normal',8,gry); doc.text('Zahlbar bis: ',ml,ry);
+  sf('normal',8,blk); doc.text(fmtDateObj(md.dueDate),ml+22,ry);
+
+  let ty=100;
+  sf('bold',7.5,[51,51,51]);
+  doc.setDrawColor(...blk); doc.setLineWidth(0.5); doc.line(ml,ty+1,W-mr,ty+1);
+  const totX=W-mr-72;
+  const cx={pos:ml, desc:ml+8, einh:W-mr-54, menge:W-mr-32, amt:W-mr};
+  doc.text('Pos',cx.pos,ty); doc.text('Beschreibung',cx.desc,ty);
+  doc.text('Einheit',cx.einh,ty,{align:'right'});
+  doc.text('Menge',cx.menge,ty,{align:'right'});
+  doc.text('Betrag',cx.amt,ty,{align:'right'});
+  ty+=5.5; doc.setLineWidth(0.3); doc.setDrawColor(...lgry);
+
+  md.positions.forEach(function(p,i){
+    sf('normal',8.5,gry); doc.text(String(i+1),cx.pos,ty);
+    sf('normal',8.5,blk);
+    const dl=doc.splitTextToSize(p.desc||'–',75);
+    doc.text(dl,cx.desc,ty);
+    doc.text(p.einheit||'Stk.',cx.einh,ty,{align:'right'});
+    doc.text(String(p.menge||1),cx.menge,ty,{align:'right'});
+    doc.text(cur+' '+p.price.toLocaleString('de-CH',{minimumFractionDigits:2}),cx.amt,ty,{align:'right'});
+    ty+=dl.length>1?dl.length*4.5:7;
+    doc.line(ml,ty-1.5,W-mr,ty-1.5);
+  });
+
+  let ttY=ty+5;
+  sf('normal',8.5,gry);
+  doc.text('Total netto',totX,ttY); doc.text(cur+' '+net.toLocaleString('de-CH',{minimumFractionDigits:2}),W-mr,ttY,{align:'right'}); ttY+=5;
+  doc.text('MWST'+(md.mwstRate>0?' '+md.mwstRate+'%':''),totX,ttY); doc.text(cur+' '+mwstAmt.toLocaleString('de-CH',{minimumFractionDigits:2}),W-mr,ttY,{align:'right'}); ttY+=2.5;
+  doc.setDrawColor(...blk); doc.setLineWidth(0.5); doc.line(totX,ttY,W-mr,ttY); ttY+=5;
+  sf('bold',10); doc.text('Total inkl.',totX,ttY); doc.text(cur+' '+totalFmt,W-mr,ttY,{align:'right'});
+
+  const slipY=H-105;
+  doc.setDrawColor(180,180,175); doc.setLineWidth(0.5);
+  doc.setLineDashPattern([2,2],0); doc.line(0,slipY,W,slipY); doc.setLineDashPattern([],0);
+  sf('normal',11,[185,185,180]); doc.text('✂',W/2,slipY-1,{align:'center'});
+
+  const recW=62;
+  const kredStr=iban+'\n'+sName+'\n'+sStreet+'\nCH-'+sZip+' '+sCity;
+  const debtStr=dName+'\n'+dStreet+'\nCH-'+dZip+' '+dCity;
+  const sf2=function(lbl,val,x,y,maxW){
+    sf('bold',6,[85,85,85]); doc.text(lbl,x,y);
+    sf('normal',7,blk);
+    const ls=doc.splitTextToSize(val,maxW||recW-4);
+    doc.text(ls,x,y+3.5);
+    return y+3.5+ls.length*3.3;
+  };
+
+  sf('bold',8,blk); doc.text('Empfangsschein',ml,slipY+9);
+  let lry=slipY+13;
+  lry=sf2('Konto / Zahlbar an',kredStr,ml,lry)+2;
+  
+  lry=sf2('Zahlbar durch',debtStr,ml,lry)+2;
+  sf('bold',6,[85,85,85]); doc.text('Währung',ml,lry); doc.text('Betrag',ml+18,lry);
+  sf('normal',8,blk); doc.text(cur,ml,lry+5); doc.text(totalFmt,ml+18,lry+5);
+  sf('normal',6,gry); doc.text('Annahmestelle',recW+1,H-5,{align:'right'});
+
+  doc.setDrawColor(175,175,170); doc.setLineWidth(0.5);
+  doc.setLineDashPattern([2,2],0); doc.line(recW+5,slipY,recW+5,H); doc.setLineDashPattern([],0);
+
+  const px=recW+10;
+  sf('bold',8,blk); doc.text('Zahlteil',px,slipY+9);
+
+  // QR Code – pure JS matrix drawn directly as PDF rects (no canvas/CORS)
+  try {
+    const qrText = buildQR(cur, total, iban, sName, sStreet, sZip, sCity, dName, dStreet, dZip, dCity, ref, addinfo);
+    const qr = qrcode(0, 'M');
+    qr.addData(qrText);
+    qr.make();
+    const moduleCount = qr.getModuleCount();
+    const qrSizeMM = 46;
+    const cellMM = qrSizeMM / moduleCount;
+    const qrX = px, qrY = slipY + 13;
+    doc.setFillColor(255,255,255);
+    doc.rect(qrX, qrY, qrSizeMM, qrSizeMM, 'F');
+    doc.setFillColor(0,0,0);
+    for (var row = 0; row < moduleCount; row++) {
+      for (var col = 0; col < moduleCount; col++) {
+        if (qr.isDark(row, col)) {
+          doc.rect(qrX + col * cellMM, qrY + row * cellMM, cellMM, cellMM, 'F');
+        }
+      }
+    }
+  } catch(e) { console.log('QR error:', e); }
+
+  let pry=slipY+62;
+  sf('bold',6,[85,85,85]); doc.text('Währung',px,pry); doc.text('Betrag',px+18,pry);
+  sf('normal',8,blk); doc.text(cur,px,pry+5); doc.text(totalFmt,px+18,pry+5);
+
+  const rx=px+50; let rry=slipY+13;
+  rry=sf2('Konto / Zahlbar an',kredStr,rx,rry,80)+2;
+  
+  if(addinfo) rry=sf2('Zusätzliche Informationen',addinfo,rx,rry,80)+2;
+  sf2('Zahlbar durch',debtStr,rx,rry,80);
+
+  if (fname) doc.save(fname.replace(/[^a-zA-Z0-9_-]/g,'_')+'.pdf');
+}
+
+async function exportPDF() {
+  update();
+  await new Promise(function(r){setTimeout(r,500);});
+  const tplFields = {};
+  ['s-name','s-street','s-zip','s-city','d-name','d-street','d-zip','d-city','inv-nr','inv-cur','mwst','iban','addinfo'].forEach(function(id){tplFields[id]=g(id);});
+  const md = {
+    tpl: { fields: tplFields },
+    cur: g('inv-cur') || 'CHF',
+    mwstRate: parseFloat(document.getElementById('mwst').value) || 0,
+    invDate: new Date((g('inv-date') || new Date().toISOString().split('T')[0]) + 'T00:00:00'),
+    dueDate: new Date((g('inv-due') || new Date().toISOString().split('T')[0]) + 'T00:00:00'),
+    periode: currentPeriode(), invNr: g('inv-nr'),
+    positions: positions.map(function(p){return Object.assign({},p);})
+  };
+  await buildAndSavePDF(md, g('inv-nr').replace(/[^a-zA-Z0-9-]/g,'_'));
+}
+
+
+// ── FACTORING ──
+let factoringList = [];
+
+const FACTORING_PROVIDERS = [
+  { name: 'A.B.S. Factoring AG',   email: 'info@abs-factoring.ch',  location: 'Altendorf SZ' },
+  { name: 'Svea Finans AG',         email: 'beratung@svea.com',       location: 'Zürich' },
+  { name: 'KMU Factoring AG',       email: 'info@kmufactoring.ch',    location: 'Pfäffikon SZ' },
+  { name: 'KMU Finanz AG',          email: 'info@kmufinanz.ch',       location: 'St. Gallen' },
+  { name: 'GRENKE Factoring',       email: 'info@grenke.ch',          location: 'Schweiz' },
+  { name: 'SWIFAC Swiss Factoring', email: 'info@swifac.ch',          location: 'Winterthur' },
+  { name: 'MantaFlow Finance',      email: 'info@mantaflow.ch',       location: 'Zug' },
+];
+
+function addToFactoring() {
+  if (!requireAuth('factoring')) return;
+  const mwstRate = parseFloat(document.getElementById('mwst').value) || 0;
+  const net = positions.reduce(function(s,p){ return s+p.price; }, 0);
+  const total = net * (1 + mwstRate/100);
+  const cur = g('inv-cur') || 'CHF';
+  const invNr = g('inv-nr');
+  if (!invNr) { alert('Bitte zuerst eine Rechnungsnummer eingeben.'); return; }
+  if (factoringList.find(function(f){ return f.invNr === invNr && f.status !== 'withdrawn'; })) {
+    alert('Diese Rechnung ist bereits im Factoring.'); return;
+  }
+  factoringList.push({
+    id: Date.now(),
+    invNr: invNr,
+    debtor: g('d-name'),
+    creditor: g('s-name'),
+    amount: total,
+    cur: cur,
+    invDate: g('inv-date'),
+    dueDate: g('inv-due'),
+    positions: positions.map(function(p){ return Object.assign({},p); }),
+    selectedProviders: FACTORING_PROVIDERS.map(function(p){ return p.email; }),
+    status: 'draft',
+    offers: [],
+    commission: 1.0
+  });
+  // Auto-increment invoice number for next use
+  var currentNr = g('inv-nr');
+  var nrParts = currentNr.match(/^(.*?)(\d+)$/);
+  if (nrParts) {
+    var nextNr = nrParts[1] + String(parseInt(nrParts[2])+1).padStart(nrParts[2].length,'0');
+    document.getElementById('inv-nr').value = nextNr;
+    update();
+  }
+  const btn = document.getElementById('btn-factoring');
+  const orig = btn.innerHTML;
+  btn.textContent = '✓ Hinzugefügt'; btn.style.color='#059669'; btn.style.borderColor='#059669';
+  setTimeout(function(){ btn.innerHTML=orig; btn.style.color=''; btn.style.borderColor=''; }, 2000);
+  switchTab('factoring');
+}
+
+function toggleProvider(factId, email) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  var idx = f.selectedProviders.indexOf(email);
+  if (idx>=0) f.selectedProviders.splice(idx,1); else f.selectedProviders.push(email);
+  renderFactoring();
+}
+
+function selectAllProviders(factId, all) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  f.selectedProviders = all ? FACTORING_PROVIDERS.map(function(p){return p.email;}) : [];
+  renderFactoring();
+}
+
+function sendToProviders(factId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  var selected = FACTORING_PROVIDERS.filter(function(p){ return f.selectedProviders.indexOf(p.email)>=0; });
+  if (selected.length===0) { alert('Bitte mindestens einen Anbieter auswählen.'); return; }
+  var dueFmt = f.dueDate ? new Date(f.dueDate+'T00:00:00').toLocaleDateString('de-CH') : '–';
+  var totalFmt = f.cur+' '+f.amount.toLocaleString('de-CH',{minimumFractionDigits:2});
+  var posLines = f.positions.map(function(p,i){
+    return (i+1)+'. '+p.desc+(p.periode?' ('+p.periode+')':'')+': '+f.cur+' '+p.price.toLocaleString('de-CH',{minimumFractionDigits:2});
+  }).join('\n');
+  var subject = 'Factoring-Anfrage: Rechnung '+f.invNr+' – '+totalFmt;
+  var body = 'Sehr geehrte Damen und Herren'
+    +'\n\nWir vermitteln im Auftrag eines Kunden folgende Rechnung zur Factoring-Anfrage:'
+    +'\n\nRechnungsnummer:  '+f.invNr
+    +'\nRechnungssteller: '+f.creditor
+    +'\nSchuldner:        '+f.debtor
+    +'\nRechnungsbetrag:  '+totalFmt
+    +'\nFälligkeitsdatum: '+dueFmt
+    +'\n\nPositionen:\n'+posLines
+    +'\n\nBitte teilen Sie uns Ihr Angebot mit:'
+    +'\n- Abschlag in %'
+    +'\n- Auszahlungsbetrag in CHF'
+    +'\n- Auszahlungsfrist nach Zuschlag (Tage)'
+    +'\n- Factoring-Modell (echt/unecht, offen/still)'
+    +'\n\nBitte antworten Sie direkt auf diese E-Mail.'
+    +'\n\nFreundliche Grüsse\n'+g('s-name');
+  var toList = selected.map(function(p){return p.email;}).join(',');
+  window.location.href = 'mailto:'+toList+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  f.status = 'sent';
+  f.sentDate = new Date().toLocaleDateString('de-CH');
+  f.sentAt = Date.now();
+  setTimeout(function(){ renderFactoring(); }, 600);
+}
+
+function addOffer(factId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  var provider = document.getElementById('o-provider-'+factId).value.trim();
+  var discount = parseFloat(document.getElementById('o-discount-'+factId).value);
+  var days = parseInt(document.getElementById('o-days-'+factId).value);
+  var commission = parseFloat(document.getElementById('o-commission-'+factId).value)||0;
+  if (!provider||isNaN(discount)||isNaN(days)) { alert('Bitte alle Felder ausfüllen.'); return; }
+  var netFromProvider = f.amount * (1 - discount/100);
+  var netToClient = netFromProvider * (1 - commission/100);
+  f.offers.push({
+    id: Date.now(),
+    provider: provider,
+    discount: discount,
+    days: days,
+    commission: commission,
+    netFromProvider: netFromProvider,
+    netToClient: netToClient,
+    status: 'open'
+  });
+  if (f.status==='sent') f.status='offers';
+  f.offerReceivedAt = f.offerReceivedAt || Date.now();
+  document.getElementById('o-provider-'+factId).value='';
+  document.getElementById('o-discount-'+factId).value='';
+  document.getElementById('o-days-'+factId).value='';
+  document.getElementById('o-commission-'+factId).value='1';
+  renderFactoring();
+}
+
+function acceptOffer(factId, offerId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  if (!confirm('Angebot annehmen und Rechnungssteller informieren?')) return;
+  var offer = f.offers.find(function(o){ return o.id===offerId; }); if(!offer) return;
+  f.offers.forEach(function(o){ o.status = o.id===offerId ? 'accepted' : 'declined'; });
+  f.status = 'accepted';
+  // Open mailto to client
+  var subject = 'Factoring-Angebot für Rechnung '+f.invNr;
+  var body = 'Guten Tag'
+    +'\n\nWir freuen uns, Ihnen folgendes Factoring-Angebot für Rechnung '+f.invNr+' mitteilen zu können:'
+    +'\n\nAuszahlungsbetrag: '+f.cur+' '+offer.netToClient.toLocaleString('de-CH',{minimumFractionDigits:2})
+    +'\nAuszahlung innerhalb: '+offer.days+' Werktag'+(offer.days>1?'e':'')
+    +'\n\nBei Interesse bitten wir Sie uns zu bestätigen.'
+    +'\n\nFreundliche Grüsse\n'+g('s-name');
+  window.location.href = 'mailto:?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+  setTimeout(function(){ renderFactoring(); }, 600);
+}
+
+function withdrawFactoring(factId) {
+  if (!confirm('Rechnung aus dem Factoring zurückziehen?')) return;
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  f.status = 'withdrawn';
+  renderFactoring();
+}
+
+// ── FACTORING AUTH ──
+// Logins: email + password
+var FACT_USERS = {
+  // Client view: Brand Agent als Rechnungssteller sieht eigene Rechnungen im Factoring
+  'info@brandagent.ch':  { password: 'brandagent2026', role: 'client', name: 'Brand Agent GmbH', filter: 'Brand Agent GmbH' },
+  // Admin view: Internes Login um Angebote zu erfassen und weiterzuleiten
+  'admin@brandagent.ch': { password: 'admin2026',       role: 'admin',  name: 'Brand Agent Admin' },
+};
+
+var factCurrentUser = null;
+
+function doFactLogin() {
+  var email = document.getElementById('fact-username').value.trim().toLowerCase();
+  var pass  = document.getElementById('fact-password').value;
+  var err   = document.getElementById('fact-login-error');
+  var u = FACT_USERS[email];
+  if (!u || u.password !== pass) {
+    err.textContent = 'E-Mail oder Passwort falsch.'; return;
+  }
+  factCurrentUser = Object.assign({ email: email }, u);
+  err.textContent = '';
+  document.getElementById('fact-login').style.display = 'none';
+  if (u.role === 'admin') {
+    document.getElementById('fact-admin-view').style.display = '';
+    renderAdminFactoring();
+  } else {
+    document.getElementById('fact-client-view').style.display = '';
+    document.getElementById('fact-client-greeting').textContent = u.name;
+    renderFactoring();
+  }
+}
+
+function factLogout() {
+  factCurrentUser = null;
+  document.getElementById('fact-login').style.display = '';
+  document.getElementById('fact-client-view').style.display = 'none';
+  document.getElementById('fact-admin-view').style.display = 'none';
+  document.getElementById('fact-username').value = '';
+  document.getElementById('fact-password').value = '';
+}
+
+// Called when switching to factoring tab
+function initFactoringTab() {
+  if (!factCurrentUser) {
+    document.getElementById('fact-login').style.display = '';
+    document.getElementById('fact-client-view').style.display = 'none';
+    document.getElementById('fact-admin-view').style.display = 'none';
+  }
+}
+
+
+function renderFactoring() {
+  var grid = document.getElementById('factoring-grid');
+  var note = document.getElementById('factoring-note');
+  // Filter by current user if client
+  var list = factoringList.filter(function(f){ return f.status !== 'withdrawn'; });
+  if (factCurrentUser && factCurrentUser.role === 'client' && factCurrentUser.filter) {
+    list = list.filter(function(f){ return f.debtor === factCurrentUser.filter || f.creditor === factCurrentUser.filter; });
+  }
+  if (list.length === 0) {
+    note.textContent = '';
+    grid.innerHTML = '<div class="factoring-empty" style="width:100%;">Keine Rechnungen im Factoring.</div>';
+    return;
+  }
+  note.textContent = list.length + ' Rechnung' + (list.length !== 1 ? 'en' : '');
+  grid.innerHTML = '';
+
+  list.forEach(function(f) {
+    var dueFmt = f.dueDate ? new Date(f.dueDate+'T00:00:00').toLocaleDateString('de-CH') : '–';
+    var totalFmt = f.cur + ' ' + f.amount.toLocaleString('de-CH',{minimumFractionDigits:2});
+    var pendingOffer = f.offers.find(function(o){ return o.status==='pending_client'; });
+    var acceptedOffer = f.offers.find(function(o){ return o.status==='accepted'; });
+
+    // Simplified status: only 2 client-facing statuses
+    var hasPendingOffer = f.offers.find(function(o){ return o.status==='pending_client'; });
+    var hasAccepted = f.offers.find(function(o){ return o.status==='accepted'; });
+    var clientStatus = hasAccepted ? 'accepted' : hasPendingOffer ? 'pending_client' : 'processing';
+    var statusLabel = { processing:'In Bearbeitung', pending_client:'Angebot erhalten', accepted:'Abgeschlossen' }[clientStatus];
+    var statusColor = { processing:'#6B7280', pending_client:'#059669', accepted:'#7C3AED' }[clientStatus];
+    var statusBg    = { processing:'#F3F4F6', pending_client:'#ECFDF5', accepted:'#F5F3FF' }[clientStatus];
+
+    // Build full A4 invoice HTML (same structure as preview)
+    var posRows = f.positions.map(function(p,i){
+      return '<tr style="border-bottom:0.5px solid #E5E2DC;">'
+        +'<td style="padding:8px 6px 8px 0;font-size:8px;color:#aaa;vertical-align:top;">'+(i+1)+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;vertical-align:top;">'+(p.desc||'')+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;color:#555;vertical-align:top;">'+(p.periode||'')+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;text-align:right;vertical-align:top;white-space:nowrap;">'+f.cur+' '+p.price.toFixed(2)+'</td>'
+        +'</tr>';
+    }).join('');
+
+    var net = f.positions.reduce(function(s,p){return s+p.price;},0);
+
+    // QR code for this invoice - generate as SVG
+    var qrSvg = '';
+    try {
+      var qrText = ['SPC','0200','1','','S','','','','','','CH','','','','','','',
+        f.amount.toFixed(2),f.cur,'S',f.debtor,'','','','','CH','NON','','','EPD',''].join('\n');
+      var qr = qrcode(0,'M');
+      qr.addData(qrText);
+      qr.make();
+      var n = qr.getModuleCount();
+      var cell = 46/n;
+      qrSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="46mm" height="46mm" viewBox="0 0 '+46+' '+46+'">'
+        +'<rect width="46" height="46" fill="white"/>';
+      for(var r=0;r<n;r++){for(var c=0;c<n;c++){if(qr.isDark(r,c)){
+        qrSvg+='<rect x="'+(c*cell).toFixed(2)+'" y="'+(r*cell).toFixed(2)+'" width="'+cell.toFixed(2)+'" height="'+cell.toFixed(2)+'" fill="black"/>';
+      }}}
+      qrSvg += '</svg>';
+    } catch(e){}
+
+    var invDate = f.invDate ? new Date(f.invDate+'T00:00:00').toLocaleDateString('de-CH') : '–';
+
+    var fullInv = '<div style="background:white;width:210mm;font-family:Helvetica,Arial,sans-serif;font-size:9pt;box-sizing:border-box;">'
+      // Header
+      +'<div style="padding:13mm 14mm 7mm;display:flex;justify-content:flex-end;">'
+        +'<div style="text-align:right;font-size:8.5pt;line-height:1.5;">'
+          +'<div style="font-size:10.5pt;font-weight:bold;margin-bottom:1mm;">'+f.creditor+'</div>'
+        +'</div>'
+      +'</div>'
+      // Recipient
+      +'<div style="padding:0 14mm 5mm;">'
+        +'<div style="font-size:9pt;font-weight:bold;">'+f.debtor+'</div>'
+      +'</div>'
+      // Invoice ref
+      +'<div style="padding:14mm 14mm 7mm;">'
+        +'<div style="font-size:11.5pt;font-weight:bold;margin-bottom:2mm;">Rechnung '+f.invNr+'</div>'
+        +'<div style="font-size:8pt;color:#666;margin-bottom:1mm;">Datum: <span style="color:#1A1A1A;font-weight:500;">'+invDate+'</span></div>'
+        +'<div style="font-size:8pt;color:#666;">Zahlbar bis: <span style="color:#1A1A1A;font-weight:500;">'+dueFmt+'</span></div>'
+      +'</div>'
+      // Table
+      +'<div style="padding:0 14mm;">'
+        +'<table style="width:100%;border-collapse:collapse;font-size:8.5pt;table-layout:fixed;">'
+          +'<thead><tr style="border-bottom:1px solid #1A1A1A;">'
+            +'<th style="width:18px;padding:0 0 2.5mm;text-align:left;font-size:7.5pt;font-weight:600;"></th>'
+            +'<th style="padding:0 0 2.5mm;text-align:left;font-size:7.5pt;font-weight:600;">Beschreibung</th>'
+            +'<th style="width:48mm;padding:0 0 2.5mm;text-align:left;font-size:7.5pt;font-weight:600;">Periode</th>'
+            +'<th style="width:36mm;padding:0 0 2.5mm;text-align:right;font-size:7.5pt;font-weight:600;">Betrag</th>'
+          +'</tr></thead>'
+          +'<tbody>'+posRows+'</tbody>'
+        +'</table>'
+      +'</div>'
+      // Totals
+      +'<div style="padding:3mm 14mm;display:flex;justify-content:flex-end;">'
+        +'<div style="width:72mm;">'
+          +'<div style="display:flex;justify-content:space-between;padding:1.5mm 0;font-size:8.5pt;border-bottom:0.4px solid #EEECEA;color:#555;"><span>Total netto</span><span>'+f.cur+' '+net.toFixed(2)+'</span></div>'
+          +'<div style="display:flex;justify-content:space-between;padding:1.5mm 0;font-size:8.5pt;border-bottom:0.4px solid #EEECEA;color:#555;"><span>MWST</span><span>'+f.cur+' 0.00</span></div>'
+          +'<div style="display:flex;justify-content:space-between;padding:2mm 0;font-size:9.5pt;font-weight:bold;border-top:1px solid #1A1A1A;margin-top:1mm;"><span>Total inkl.</span><span>'+f.cur+' '+f.amount.toFixed(2)+'</span></div>'
+        +'</div>'
+      +'</div>'
+      +'<div style="flex:1;min-height:20mm;"></div>'
+      // Payment slip
+      +'<div style="border-top:1.5px dashed #C5C3BD;position:relative;margin-top:10mm;">'
+        +'<div style="display:grid;grid-template-columns:62mm 5mm 1fr;min-height:105mm;font-size:7pt;">'
+          +'<div style="padding:5mm 4mm;border-right:1.5px dashed #C5C3BD;">'
+            +'<div style="font-size:8.5pt;font-weight:bold;margin-bottom:4mm;">Empfangsschein</div>'
+            +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:0.8mm;">Konto / Zahlbar an</div>'
+            +'<div style="font-size:7pt;line-height:1.4;">'+f.creditor+'</div>'
+            +'<div style="display:flex;gap:8mm;margin-top:3mm;">'
+              +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Währung</div><div style="font-size:7.5pt;">'+f.cur+'</div></div>'
+              +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Betrag</div><div style="font-size:7.5pt;">'+f.amount.toFixed(2)+'</div></div>'
+            +'</div>'
+            +'<div style="font-size:6pt;color:#aaa;text-align:right;margin-top:auto;padding-top:3mm;">Annahmestelle</div>'
+          +'</div>'
+          +'<div></div>'
+          +'<div style="padding:5mm 5mm;">'
+            +'<div style="font-size:8.5pt;font-weight:bold;margin-bottom:4mm;">Zahlteil</div>'
+            +'<div style="display:grid;grid-template-columns:47mm 1fr;gap:4mm;">'
+              +'<div>'+(qrSvg||'<div style="width:46mm;height:46mm;background:#eee;"></div>')
+                +'<div style="display:flex;gap:8mm;margin-top:2mm;">'
+                  +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Währung</div><div>'+f.cur+'</div></div>'
+                  +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Betrag</div><div>'+f.amount.toFixed(2)+'</div></div>'
+                +'</div>'
+              +'</div>'
+              +'<div>'
+                +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:0.8mm;">Konto / Zahlbar an</div>'
+                +'<div style="font-size:7pt;line-height:1.4;">'+f.creditor+'</div>'
+                +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-top:3mm;margin-bottom:0.8mm;">Zahlbar durch</div>'
+                +'<div style="font-size:7pt;">'+f.debtor+'</div>'
+              +'</div>'
+            +'</div>'
+          +'</div>'
+        +'</div>'
+      +'</div>'
+    +'</div>';
+
+    // Scale: card width 260px, A4 = 794px
+    var scale = 260 / 794;
+    var scaledH = Math.round(1123 * scale * 0.72); // crop empty space
+
+    // Offer/status section BELOW card body - only show relevant state
+    var bottomHTML = '';
+    if (clientStatus === 'processing') {
+      bottomHTML = '<div class="fact-inv-card-offer" style="background:#F9FAFB;border-top:1px solid #E5E7EB;">'
+        +'<div class="fact-inv-card-offer-lbl" style="color:#9CA3AF;">Angebot ausstehend</div>'
+        +'<div style="font-size:1.1rem;font-weight:700;color:#D1D5DB;letter-spacing:0.1em;margin:0.2rem 0;">CHF ••••</div>'
+        +'<div style="font-size:0.65rem;color:#bbb;margin-bottom:0.5rem;">In der Regel innerhalb von 24h</div>'
+        +'<button onclick="event.stopPropagation();withdrawFactoring('+f.id+')" '
+        +'style="padding:0.3rem 0.65rem;background:#fff;color:#888;border:1px solid #DDDBD6;font-size:0.68rem;font-family:inherit;border-radius:3px;cursor:pointer;">'
+        +'Verkauf zurückziehen</button>'
+        +'</div>';
+    } else if (clientStatus === 'pending_client' && hasPendingOffer) {
+      bottomHTML = '<div class="fact-inv-card-offer">'
+        +'<div class="fact-inv-card-offer-lbl">Angebot von Brand Agent</div>'
+        +'<div class="fact-inv-card-offer-amt">'+f.cur+' '+hasPendingOffer.netToClient.toLocaleString('de-CH',{minimumFractionDigits:2})+'</div>'
+        +'<div class="fact-inv-card-offer-days" style="margin-bottom:0.45rem;">Auszahlung in '+hasPendingOffer.days+' Werktag'+(hasPendingOffer.days>1?'en':'')+'</div>'
+        +'<div class="fact-inv-card-offer-btns">'
+        +'<button class="btn-co-accept" onclick="event.stopPropagation();clientAccept('+f.id+','+hasPendingOffer.id+')">✓ Annehmen</button>'
+        +'<button class="btn-co-decline" onclick="event.stopPropagation();clientDecline('+f.id+','+hasPendingOffer.id+')">Ablehnen</button>'
+        +'</div></div>';
+    } else if (clientStatus === 'accepted' && hasAccepted) {
+      bottomHTML = '<div class="fact-inv-card-offer" style="background:#F5F3FF;border-top:1px solid #DDD6FE;">'
+        +'<div class="fact-inv-card-offer-lbl" style="color:#7C3AED;">✓ Abgeschlossen</div>'
+        +'<div class="fact-inv-card-offer-amt" style="color:#7C3AED;">'+f.cur+' '+hasAccepted.netToClient.toLocaleString('de-CH',{minimumFractionDigits:2})+'</div>'
+        +'<div class="fact-inv-card-offer-days">Ausbezahlt in '+hasAccepted.days+' Werktag'+(hasAccepted.days>1?'en':'')+'</div>'
+        +'</div>';
+    }
+
+    var card = document.createElement('div');
+    card.className = 'fact-inv-card';
+    card.innerHTML =
+      '<div class="fact-inv-card-preview" style="height:'+scaledH+'px;">'
+        +'<div style="transform:scale('+scale.toFixed(4)+');transform-origin:top left;width:794px;pointer-events:none;">'+fullInv+'</div>'
+      +'</div>'
+      +'<div class="fact-inv-card-body">'
+        +'<div class="fact-inv-card-nr">'+f.invNr+'</div>'
+        +'<div class="fact-inv-card-meta">'+f.debtor+' · Fällig '+dueFmt+'</div>'
+        +'<div class="fact-inv-card-amount">'+totalFmt+'</div>'
+        +'<span class="fact-inv-card-status" style="background:'+statusBg+';color:'+statusColor+';border:1px solid '+statusColor+'33;">'+statusLabel+'</span>'
+      +'</div>'
+      + bottomHTML;
+
+    grid.appendChild(card);
+  });
+}
+
+
+function clientAccept(factId, offerId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  f.offers.forEach(function(o){ if(o.id===offerId) o.status='accepted'; });
+  f.status = 'accepted';
+  renderFactoring();
+}
+
+function clientDecline(factId, offerId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  var o = f.offers.find(function(x){ return x.id===offerId; }); if(o) o.status='declined_client';
+  f.status = 'offers';
+  renderFactoring();
+}
+
+function renderAdminFactoring() {
+  var grid = document.getElementById('factoring-admin-grid');
+  var note = document.getElementById('factoring-admin-note');
+  if (!grid) return;
+
+  var active = factoringList.filter(function(f){ return f.status !== 'withdrawn'; });
+  if (factoringList.length === 0) {
+    note.textContent = '';
+    grid.innerHTML = '<div class="factoring-empty">Noch keine Rechnungen im Factoring.</div>';
+    return;
+  }
+  note.textContent = active.length + ' Rechnung' + (active.length !== 1 ? 'en' : '');
+  grid.innerHTML = '';
+
+  factoringList.forEach(function(f) {
+    var dueFmt = f.dueDate ? new Date(f.dueDate+'T00:00:00').toLocaleDateString('de-CH') : '–';
+    var invFmt = f.invDate ? new Date(f.invDate+'T00:00:00').toLocaleDateString('de-CH') : '–';
+    var totalFmt = f.cur + ' ' + f.amount.toLocaleString('de-CH',{minimumFractionDigits:2});
+
+    // Status with timing
+    var now = Date.now();
+    var statusLabel, statusColor, statusBg;
+    var acceptedOffer = f.offers.find(function(o){ return o.status==='accepted'; });
+    var pendingOffer  = f.offers.find(function(o){ return o.status==='pending_client'; });
+
+    if (f.status === 'withdrawn') {
+      statusLabel = 'Zurückgezogen'; statusColor = '#9CA3AF'; statusBg = '#F9FAFB';
+    } else if (acceptedOffer) {
+      statusLabel = '✓ Angenommen'; statusColor = '#7C3AED'; statusBg = '#F5F3FF';
+    } else if (pendingOffer) {
+      statusLabel = 'Angebot beim Kunden'; statusColor = '#F59E0B'; statusBg = '#FEF3C7';
+    } else if (f.offers.length > 0) {
+      var since = f.offerReceivedAt ? timeSince(f.offerReceivedAt) : '';
+      statusLabel = 'Angebot erfasst' + (since ? ' · vor ' + since : '');
+      statusColor = '#059669'; statusBg = '#ECFDF5';
+    } else if (f.status === 'sent') {
+      var since = f.sentAt ? timeSince(f.sentAt) : '';
+      statusLabel = 'Angefragt' + (since ? ' · vor ' + since : '');
+      statusColor = '#3B82F6'; statusBg = '#EFF6FF';
+    } else {
+      statusLabel = 'Offen'; statusColor = '#6B7280'; statusBg = '#F3F4F6';
+    }
+
+    // Same invoice card preview as client view
+    var posRows = f.positions.map(function(p,i){
+      return '<tr style="border-bottom:0.5px solid #E5E2DC;">'
+        +'<td style="padding:8px 6px 8px 0;font-size:8px;color:#aaa;vertical-align:top;">'+(i+1)+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;vertical-align:top;">'+(p.desc||'')+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;color:#555;vertical-align:top;">'+(p.periode||'')+'</td>'
+        +'<td style="padding:8px 0;font-size:9px;text-align:right;vertical-align:top;white-space:nowrap;">'+f.cur+' '+p.price.toFixed(2)+'</td>'
+        +'</tr>';
+    }).join('');
+    var net = f.positions.reduce(function(s,p){return s+p.price;},0);
+
+    var qrSvg = '';
+    try {
+      var qr = qrcode(0,'M');
+      var qrStr = ['SPC','0200','1','','S',f.creditor,'','','','','CH','','','','','','',f.amount.toFixed(2),f.cur,'S',f.debtor,'','','','','CH','NON','','','EPD',''].join('\n');
+      qr.addData(qrStr);
+
+      qr.make();
+      var n=qr.getModuleCount(), cell=46/n;
+      qrSvg='<svg xmlns="http://www.w3.org/2000/svg" width="46mm" height="46mm" viewBox="0 0 46 46"><rect width="46" height="46" fill="white"/>';
+      for(var r=0;r<n;r++)for(var c=0;c<n;c++)if(qr.isDark(r,c))
+        qrSvg+='<rect x="'+(c*cell).toFixed(2)+'" y="'+(r*cell).toFixed(2)+'" width="'+cell.toFixed(2)+'" height="'+cell.toFixed(2)+'" fill="black"/>';
+      qrSvg+='</svg>';
+    } catch(e){}
+
+    var fullInv = '<div style="background:white;width:794px;font-family:Helvetica,Arial,sans-serif;font-size:9pt;box-sizing:border-box;">'
+      +'<div style="padding:50px 53px 28px;display:flex;justify-content:flex-end;">'
+        +'<div style="text-align:right;font-size:11px;font-weight:bold;">'+f.creditor+'</div>'
+      +'</div>'
+      +'<div style="padding:0 53px 20px;font-size:11px;font-weight:bold;">'+f.debtor+'</div>'
+      +'<div style="padding:0 53px 28px;">'
+        +'<div style="font-size:18px;font-weight:bold;margin-bottom:6px;">Rechnung '+f.invNr+'</div>'
+        +'<div style="font-size:10px;color:#888;">Datum: <span style="color:#1A1A1A;">'+invFmt+'</span> &nbsp; Zahlbar bis: <span style="color:#1A1A1A;">'+dueFmt+'</span></div>'
+      +'</div>'
+      +'<div style="padding:0 53px;">'
+        +'<table style="width:100%;border-collapse:collapse;border-top:1.5px solid #1A1A1A;">'
+          +'<thead><tr>'
+            +'<th style="width:18px;padding:6px 0;text-align:left;font-size:9px;font-weight:600;border-bottom:0.5px solid #ddd;"></th>'
+            +'<th style="padding:6px 0;text-align:left;font-size:9px;font-weight:600;border-bottom:0.5px solid #ddd;">Beschreibung</th>'
+            +'<th style="width:180px;padding:6px 0;text-align:left;font-size:9px;font-weight:600;border-bottom:0.5px solid #ddd;">Periode</th>'
+            +'<th style="width:140px;padding:6px 0;text-align:right;font-size:9px;font-weight:600;border-bottom:0.5px solid #ddd;">Betrag</th>'
+          +'</tr></thead><tbody>'+posRows+'</tbody></table>'
+      +'</div>'
+      +'<div style="padding:12px 53px;display:flex;justify-content:flex-end;">'
+        +'<div style="width:280px;">'
+          +'<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:9px;color:#555;border-bottom:0.4px solid #eee;"><span>Total netto</span><span>'+f.cur+' '+net.toFixed(2)+'</span></div>'
+          +'<div style="display:flex;justify-content:space-between;padding:5px 0;font-size:9px;color:#555;border-bottom:0.4px solid #eee;"><span>MWST</span><span>'+f.cur+' 0.00</span></div>'
+          +'<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:11px;font-weight:bold;border-top:1px solid #1A1A1A;margin-top:2px;"><span>Total inkl.</span><span>'+f.cur+' '+f.amount.toFixed(2)+'</span></div>'
+        +'</div>'
+      +'</div>'
+      +'<div style="margin:20px 0;border-top:1.5px dashed #C5C3BD;">'
+        +'<div style="display:grid;grid-template-columns:234px 18px 1fr;min-height:390px;font-size:7pt;">'
+          +'<div style="padding:18px 14px;border-right:1.5px dashed #C5C3BD;">'
+            +'<div style="font-size:9pt;font-weight:bold;margin-bottom:14px;">Empfangsschein</div>'
+            +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:3px;">Konto / Zahlbar an</div>'
+            +'<div style="font-size:7pt;line-height:1.4;margin-bottom:10px;">'+f.creditor+'</div>'
+            +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:3px;">Zahlbar durch</div>'
+            +'<div style="font-size:7pt;">'+f.debtor+'</div>'
+            +'<div style="display:flex;gap:28px;margin-top:10px;">'
+              +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Währung</div><div style="font-size:8pt;">'+f.cur+'</div></div>'
+              +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Betrag</div><div style="font-size:8pt;">'+f.amount.toFixed(2)+'</div></div>'
+            +'</div>'
+          +'</div>'
+          +'<div></div>'
+          +'<div style="padding:18px 18px;">'
+            +'<div style="font-size:9pt;font-weight:bold;margin-bottom:14px;">Zahlteil</div>'
+            +'<div style="display:grid;grid-template-columns:175px 1fr;gap:14px;">'
+              +'<div>'+(qrSvg||'<div style="width:175px;height:175px;background:#eee;"></div>')
+                +'<div style="display:flex;gap:28px;margin-top:8px;">'
+                  +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Währung</div><div>'+f.cur+'</div></div>'
+                  +'<div><div style="font-size:6pt;font-weight:bold;color:#666;">Betrag</div><div>'+f.amount.toFixed(2)+'</div></div>'
+                +'</div>'
+              +'</div>'
+              +'<div>'
+                +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:3px;">Konto / Zahlbar an</div>'
+                +'<div style="font-size:7pt;line-height:1.5;margin-bottom:10px;">'+f.creditor+'</div>'
+                +'<div style="font-size:6pt;font-weight:bold;color:#666;margin-bottom:3px;">Zahlbar durch</div>'
+                +'<div style="font-size:7pt;">'+f.debtor+'</div>'
+              +'</div>'
+            +'</div>'
+          +'</div>'
+        +'</div>'
+      +'</div>'
+    +'</div>';
+
+    var scale = 260 / 794;
+    var scaledH = Math.round(1123 * scale * 0.72); // crop empty space
+
+    var allSel = f.selectedProviders.length === FACTORING_PROVIDERS.length;
+    var providersHTML = '';
+    if (f.status !== 'withdrawn' && !acceptedOffer) {
+      providersHTML = '<div style="padding:0.75rem;border-top:1px solid #F0EEE9;">'
+        +'<div style="font-size:0.6rem;color:#aaa;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.5rem;display:flex;justify-content:space-between;align-items:center;">'
+          +'<span>Anfrage senden an</span>'
+          +'<button onclick="event.stopPropagation();selectAllProviders('+f.id+','+(!allSel)+')" style="background:none;border:none;font-size:0.65rem;color:#7A6AAA;cursor:pointer;text-decoration:underline;font-family:inherit;">'+(allSel?'Alle abwählen':'Alle auswählen')+'</button>'
+        +'</div>'
+        +'<div style="display:flex;flex-direction:column;gap:0.2rem;margin-bottom:0.6rem;">'
+        +FACTORING_PROVIDERS.map(function(p){
+          var checked = f.selectedProviders.indexOf(p.email) >= 0;
+          return '<label onclick="event.stopPropagation()" style="display:flex;flex-direction:column;padding:4px 8px;background:'+(checked?'#F5F5F5':'#FAFAFA')+';border:1px solid '+(checked?'#999':'#E0E0E0')+';border-radius:3px;cursor:pointer;">'
+            +'<div style="display:flex;align-items:center;gap:5px;">'
+            +'<input type="checkbox" '+(checked?'checked':'')+' onchange="event.stopPropagation();toggleProvider('+f.id+',\"'+p.email+'\")" style="accent-color:#7A6AAA;margin:0;width:12px;height:12px;">'
+            +'<span style="font-size:0.65rem;font-weight:500;color:#555;">'+p.name+'</span>'
+            +'</div>'
+            +'<span style="font-size:0.58rem;color:#bbb;font-family:monospace;margin-top:1px;">'+p.email+'</span>'
+            +'</label>';
+        }).join('')
+        +'</div>'
+        +(f.status==='draft'
+          ? '<button onclick="event.stopPropagation();sendToProviders('+f.id+')" style="width:100%;padding:0.45rem;background:#1A1A1A;color:#fff;border:none;font-size:0.72rem;font-family:inherit;border-radius:3px;cursor:pointer;">&#9993; Anfrage senden ('+f.selectedProviders.length+' Anbieter)</button>'
+          : '<div style="font-size:0.65rem;color:#3B82F6;">&#10003; Anfrage gesendet am '+f.sentDate+'</div>'
+        )
+        +'</div>';
+    }
+
+    var offersHTML = '';
+    if (f.status !== 'withdrawn') {
+      if (f.offers.length > 0) {
+        offersHTML += '<div style="padding:0.5rem 0.75rem;border-top:1px solid #F0EEE9;">'
+          +'<div style="font-size:0.6rem;color:#aaa;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.4rem;">Angebote</div>'
+          +f.offers.map(function(o){
+            var isAcc = o.status==='accepted'||o.status==='pending_client';
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:0.4rem 0;border-bottom:0.4px solid #F0EEE9;">'
+              +'<div><div style="font-size:0.75rem;font-weight:500;">'+o.provider+'</div>'
+              +'<div style="font-size:0.63rem;color:#aaa;">Abschlag '+o.discount+'% · Komm. '+o.commission+'% · '+o.days+'d</div></div>'
+              +'<div style="text-align:right;">'
+              +'<div style="font-size:0.65rem;color:#aaa;">Anbieter: '+f.cur+' '+o.netFromProvider.toFixed(2)+'</div>'
+              +'<div style="font-size:0.8rem;font-weight:600;color:#059669;">Kunde: '+f.cur+' '+o.netToClient.toFixed(2)+'</div>'
+              +'</div>'
+              +(f.status==='offers'||f.status==='sent'
+                ? '<button onclick="event.stopPropagation();forwardToClient('+f.id+','+o.id+')" style="margin-left:0.5rem;padding:0.28rem 0.6rem;background:#1A1A1A;color:#fff;border:none;font-size:0.65rem;font-family:inherit;border-radius:3px;cursor:pointer;">An Kunde</button>'
+                : (isAcc?'<span style="font-size:0.65rem;color:#7C3AED;margin-left:0.5rem;font-weight:600;">&#10003;</span>':''))
+              +'</div>';
+          }).join('')+'</div>';
+      }
+      if (f.status === 'sent' || f.status === 'offers') {
+        offersHTML += '<div style="padding:0.6rem 0.75rem;border-top:1px solid #F0EEE9;background:#FAFAF9;">'
+          +'<div style="font-size:0.6rem;color:#aaa;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.4rem;">Angebot erfassen</div>'
+          +'<div style="display:grid;grid-template-columns:1fr 80px 80px 80px;gap:0.4rem;margin-bottom:0.4rem;">'
+          +'<div><div style="font-size:0.6rem;color:#aaa;margin-bottom:2px;">Anbieter</div><input onclick="event.stopPropagation()" id="o-provider-'+f.id+'" placeholder="Svea Finans AG" style="width:100%;padding:0.3rem 0.45rem;border:1px solid #DDDBD6;border-radius:3px;font-size:0.72rem;font-family:inherit;"></div>'
+          +'<div><div style="font-size:0.6rem;color:#aaa;margin-bottom:2px;">Abschlag %</div><input onclick="event.stopPropagation()" type="number" id="o-discount-'+f.id+'" placeholder="2.5" step="0.1" style="width:100%;padding:0.3rem 0.45rem;border:1px solid #DDDBD6;border-radius:3px;font-size:0.72rem;font-family:inherit;"></div>'
+          +'<div><div style="font-size:0.6rem;color:#aaa;margin-bottom:2px;">Komm. %</div><input onclick="event.stopPropagation()" type="number" id="o-commission-'+f.id+'" value="1" step="0.1" style="width:100%;padding:0.3rem 0.45rem;border:1px solid #DDDBD6;border-radius:3px;font-size:0.72rem;font-family:inherit;"></div>'
+          +'<div><div style="font-size:0.6rem;color:#aaa;margin-bottom:2px;">Tage</div><input onclick="event.stopPropagation()" type="number" id="o-days-'+f.id+'" placeholder="2" min="1" style="width:100%;padding:0.3rem 0.45rem;border:1px solid #DDDBD6;border-radius:3px;font-size:0.72rem;font-family:inherit;"></div>'
+          +'</div>'
+          +'<button onclick="event.stopPropagation();addOffer('+f.id+')" style="padding:0.35rem 0.75rem;background:#fff;border:1px solid #DDDBD6;color:#555;font-size:0.7rem;font-family:inherit;border-radius:3px;cursor:pointer;">+ Angebot hinzufügen</button>'
+          +'</div>';
+      }
+    }
+
+    var footerHTML = f.status !== 'withdrawn' && !acceptedOffer
+      ? '<div style="padding:0.5rem 0.75rem;border-top:1px solid #F0EEE9;">'
+        +'<div style="display:flex;align-items:center;gap:0.4rem;margin-bottom:0.4rem;">'
+        +'<input onclick="event.stopPropagation()" id="offer-amt-'+f.id+'" type="number" step="0.01" placeholder="Betrag CHF" style="flex:1;padding:0.35rem 0.5rem;border:1px solid #DDDBD6;border-radius:3px;font-size:0.72rem;font-family:inherit;">'
+        +'<button onclick="event.stopPropagation();submitAdminOffer('+f.id+')" style="padding:0.35rem 0.75rem;background:#1A1A1A;color:#fff;border:none;font-size:0.72rem;font-family:inherit;border-radius:3px;cursor:pointer;white-space:nowrap;">Einreichen</button>'
+        +'</div>'
+        +'<button onclick="event.stopPropagation();withdrawFactoring('+f.id+')" style="width:100%;padding:0.35rem;background:#fff;color:#C0001A;border:1px solid #FECACA;font-size:0.72rem;font-family:inherit;border-radius:3px;cursor:pointer;">Ablehnen</button>'
+        +'</div>' : '';
+
+    var card = document.createElement('div');
+    card.className = 'fact-inv-card';
+    card.style.width = '260px';
+    card.innerHTML =
+      '<div class="fact-inv-card-preview" style="height:'+scaledH+'px;">'
+        +'<div style="transform:scale('+(260/794).toFixed(4)+');transform-origin:top left;width:794px;pointer-events:none;">'+fullInv+'</div>'
+      +'</div>'
+      +'<div class="fact-inv-card-body">'
+        +'<div class="fact-inv-card-nr">'+f.invNr+'</div>'
+        +'<div class="fact-inv-card-meta">'+f.debtor+' · Fällig '+dueFmt+'</div>'
+        +'<div class="fact-inv-card-amount">'+totalFmt+'</div>'
+        +'<span class="fact-inv-card-status" style="background:'+statusBg+';color:'+statusColor+';border:1px solid '+statusColor+'33;">'+statusLabel+'</span>'
+      +'</div>'
+      + providersHTML + offersHTML + footerHTML;
+
+    grid.appendChild(card);
+  });
+}
+
+function submitAdminOffer(factId) {
+  var f = factoringList.find(function(x){ return x.id===factId; }); if(!f) return;
+  var input = document.getElementById('offer-amt-'+factId);
+  var amt = parseFloat(input.value);
+  if (isNaN(amt) || amt <= 0) { alert('Bitte gültigen Betrag eingeben.'); return; }
+  // Create an offer with this net payout amount
+  var commission = 0;
+  var discount = ((f.amount - amt) / f.amount * 100).toFixed(2);
+  f.offers.push({
+    id: Date.now(),
+    provider: 'Brand Agent GmbH (intern)',
+    discount: parseFloat(discount),
+    commission: commission,
+    days: 2,
+    netFromProvider: amt,
+    netToClient: amt,
+    status: 'open'
+  });
+  if (f.status === 'draft' || f.status === 'sent') f.status = 'offers';
+  f.offerReceivedAt = f.offerReceivedAt || Date.now();
+  input.value = '';
+  renderAdminFactoring();
+}
+
+
+// ── SUPABASE AUTH ──
+// Replace SUPABASE_URL and SUPABASE_ANON_KEY with your project values
+var SUPABASE_URL  = 'https://pkcjinzwrhygjpgasylk.supabase.co';
+var SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBrY2ppbnp3cmh5Z2pwZ2FzeWxrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3OTc3NTcsImV4cCI6MjA5NDM3Mzc1N30.9LPm7v2sgjX_2ZDM6D4m-ghoPZ8bH5RLLZJE08Bsh6w';
+var _supa = null;
+var currentUser = null;
+
+function getSupa() {
+  if (_supa) return _supa;
+  _supa = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  return _supa;
+}
+
+async function doLogin() {
+  var email = document.getElementById('login-email').value.trim().toLowerCase();
+  var pass  = document.getElementById('login-password').value;
+  var err   = document.getElementById('login-error');
+  if (!email || !pass) { err.textContent = 'Bitte E-Mail und Passwort eingeben.'; return; }
+  var result = await getSupa().auth.signInWithPassword({ email: email, password: pass });
+  if (result.error) {
+    err.textContent = result.error.message === 'Email not confirmed'
+      ? 'Bitte bestätige zuerst deine E-Mail (Link in deinem Postfach).'
+      : 'E-Mail oder Passwort falsch.';
+    return;
+  }
+  currentUser = result.data.user;
+  // Set role based on email (bypasses RLS)
+  currentUser.role = (email === 'info@brandagent.ch') ? 'admin' : 'user';
+  currentUser.name = result.data.user.user_metadata?.name || email;
+  // Also try to fetch from profiles (non-blocking)
+  getSupa().from('profiles').select('role, name').eq('id', currentUser.id).single().then(function(profile) {
+    if (profile.data && profile.data.role) {
+      currentUser.role = profile.data.role;
+      currentUser.name = profile.data.name || currentUser.name;
+      updateNavForUser();
+    }
+  });
+  hideAuthOverlay();
+}
+
+async function doRegister() {
+  var name  = document.getElementById('reg-name').value.trim();
+  var email = document.getElementById('reg-email').value.trim().toLowerCase();
+  var pass  = document.getElementById('reg-password').value;
+  var pass2 = document.getElementById('reg-password2').value;
+  var err   = document.getElementById('register-error');
+  if (!name || !email || !pass) { err.textContent = 'Bitte alle Felder ausfüllen.'; return; }
+  if (pass.length < 6) { err.textContent = 'Passwort mindestens 6 Zeichen.'; return; }
+  if (pass !== pass2) { err.textContent = 'Passwörter stimmen nicht überein.'; return; }
+  var result = await getSupa().auth.signUp({
+    email: email, password: pass,
+    options: { data: { name: name } }
+  });
+  if (result.error) { err.textContent = result.error.message; return; }
+  // Show confirmation message
+  document.getElementById('auth-register-box').innerHTML =
+    '<div class="auth-logo"><div class="ch-badge" style="width:24px;height:24px;flex-shrink:0;"><svg viewBox="0 0 12 12" fill="white" width="13" height="13"><rect x="4.5" y="0" width="3" height="12"/><rect x="0" y="4.5" width="12" height="3"/></svg></div><span>QR-Rechnung · Brand Agent GmbH</span></div>' +
+    '<div class="auth-title">E-Mail bestätigen</div>' +
+    '<div style="font-size:0.82rem;color:#555;line-height:1.6;margin-bottom:1.25rem;">Wir haben eine Bestätigungs-Mail an <strong>' + email + '</strong> gesendet.<br>Bitte klicke auf den Link in der Mail um dein Konto zu aktivieren.</div>' +
+    '<button class="auth-btn" onclick="showLogin()">Zum Login</button>';
+}
+
+async function doLogout() {
+  await getSupa().auth.signOut();
+  currentUser = null;
+  document.getElementById('auth-overlay').style.display = 'flex';
+  showLogin();
+  switchTabDirect('editor');
+}
+
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay').style.display = 'none';
+  updateNavForUser();
+  renderEditor();
+  update();
+}
+
+function showLogin() {
+  document.getElementById('auth-login-box').style.display = '';
+  document.getElementById('auth-register-box').style.display = 'none';
+  document.getElementById('login-error').textContent = '';
+}
+function showRegister() {
+  document.getElementById('auth-login-box').style.display = 'none';
+  document.getElementById('auth-register-box').style.display = '';
+  document.getElementById('register-error').textContent = '';
+}
+
+function updateNavForUser() {
+  if (!currentUser) return;
+  var tabBar = document.querySelector('.tab-bar');
+  var existing = document.getElementById('user-nav');
+  if (existing) existing.remove();
+  var nav = document.createElement('div');
+  nav.id = 'user-nav';
+  nav.style.cssText = 'margin-left:auto;display:flex;align-items:center;gap:0.75rem;padding:0 1rem;';
+  var gmailConnected = isGmailConnected();
+  nav.innerHTML =
+    (currentUser.role==='admin'
+      ? '<button onclick="gmailAuthorize()" id="gmail-connect-btn" style="padding:0.28rem 0.75rem;background:' + (gmailConnected?'#ECFDF5':'#fff') + ';border:1px solid ' + (gmailConnected?'#6EE7B7':'#DDDBD6') + ';color:' + (gmailConnected?'#059669':'#666') + ';font-size:0.68rem;font-family:inherit;border-radius:3px;cursor:pointer;">' + (gmailConnected?'✓ Gmail verbunden':'☁ Gmail verbinden') + '</button>'
+      : '') +
+    '<span style="font-size:0.72rem;color:#888;">' + (currentUser.name||currentUser.email) +
+    (currentUser.role==='admin'
+      ? ' <span style="font-size:0.6rem;background:#F5F3FF;color:#7C3AED;padding:1px 6px;border-radius:10px;font-weight:500;">Admin</span>'
+      : '') + '</span>' +
+    '<button onclick="doLogout()" style="padding:0.3rem 0.7rem;background:#fff;border:1px solid #DDDBD6;color:#666;font-size:0.7rem;font-family:inherit;border-radius:3px;cursor:pointer;">Abmelden</button>';
+  tabBar.appendChild(nav);
+}
+
+async function checkSession() {
+  try {
+    var result = await getSupa().auth.getSession();
+    if (!result.data.session) return false;
+    currentUser = result.data.session.user;
+    // Set role based on email (bypasses RLS)
+    currentUser.role = (currentUser.email === 'info@brandagent.ch') ? 'admin' : 'user';
+    currentUser.name = currentUser.user_metadata?.name || currentUser.email;
+    // Also try profiles (non-blocking)
+    getSupa().from('profiles').select('role, name').eq('id', currentUser.id).single().then(function(p) {
+      if (p.data && p.data.role) { currentUser.role = p.data.role; currentUser.name = p.data.name || currentUser.name; updateNavForUser(); }
+    });
+    return true;
+  } catch(e) { return false; }
+}
+
+function requireAuth(tab) {
+  if (!currentUser) {
+    var overlay = document.getElementById('auth-overlay');
+    if (overlay) {
+      overlay.style.display = 'flex';
+      showLogin();
+    }
+    return false;
+  }
+  return true;
+}
+
+// Admin: user management via Supabase
+async function renderUserManagement() {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  var container = document.getElementById('admin-users-container');
+  if (!container) return;
+  var result = await getSupa().from('profiles').select('*').order('created_at');
+  var users = result.data || [];
+  container.innerHTML =
+    '<div class="admin-users-title">Nutzer (' + users.length + ')</div>' +
+    users.map(function(u) {
+      return '<div class="user-row">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-size:0.78rem;font-weight:500;color:#333;">' + (u.name||'–') + '</div>' +
+          '<div style="font-size:0.65rem;color:#aaa;">' + u.email + '</div>' +
+        '</div>' +
+        '<span class="user-role-badge ' + (u.role||'user') + '">' + (u.role||'user') + '</span>' +
+        '<select onchange="updateUserRole(\"' + u.id + '\",this.value)" style="font-size:0.65rem;padding:2px 4px;border:1px solid #DDDBD6;border-radius:3px;font-family:inherit;">' +
+          '<option value="user"' + (u.role==='user'?' selected':'') + '>user</option>' +
+          '<option value="admin"' + (u.role==='admin'?' selected':'') + '>admin</option>' +
+        '</select>' +
+      '</div>';
+    }).join('');
+}
+
+async function updateUserRole(id, role) {
+  await getSupa().from('profiles').update({ role: role }).eq('id', id);
+  renderUserManagement();
+}
+
+// Compatibility
+function initUsers() {}
+function switchTabDirect(tab) {
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
+  document.querySelectorAll('.view').forEach(function(v){ v.classList.remove('active'); });
+  var tabEl = document.querySelector('.tab[onclick*="' + tab + '"]');
+  if (tabEl) tabEl.classList.add('active');
+  var viewEl = document.getElementById('view-' + tab);
+  if (viewEl) viewEl.classList.add('active');
+}
+
+// ── GMAIL OAUTH (Implicit Flow - no server needed) ──
+var GOOGLE_CLIENT_ID = '293019339886-nlgt9qfgopq82h863cg72f8l71f78bcs.apps.googleusercontent.com';
+var GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.compose';
+var gmailAccessToken = null;
+var gmailTokenExpiry = null;
+
+function gmailAuthorize() {
+  var authUrl = 'https://accounts.google.com/o/oauth2/v2/auth'
+    + '?client_id=' + GOOGLE_CLIENT_ID
+    + '&redirect_uri=' + encodeURIComponent(window.location.href.split('?')[0].split('#')[0])
+    + '&response_type=token'
+    + '&scope=' + encodeURIComponent(GMAIL_SCOPES)
+    + '&login_hint=info@brandagent.ch';
+  window.location.href = authUrl;
+}
+
+function checkGmailToken() {
+  // Check URL hash for token (implicit flow returns it in hash)
+  var hash = window.location.hash;
+  if (hash && hash.includes('access_token')) {
+    var params = new URLSearchParams(hash.substring(1));
+    var token = params.get('access_token');
+    var expiresIn = params.get('expires_in');
+    if (token) {
+      gmailAccessToken = token;
+      gmailTokenExpiry = Date.now() + (parseInt(expiresIn) * 1000);
+      sessionStorage.setItem('gmail_token', token);
+      sessionStorage.setItem('gmail_expiry', gmailTokenExpiry);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      updateGmailButton();
+      return;
+    }
+  }
+  // Check session storage
+  var stored = sessionStorage.getItem('gmail_token');
+  var expiry = parseInt(sessionStorage.getItem('gmail_expiry') || '0');
+  if (stored && expiry > Date.now()) {
+    gmailAccessToken = stored;
+    gmailTokenExpiry = expiry;
+  }
+  updateGmailButton();
+}
+
+function updateGmailButton() {
+  var btn = document.getElementById('gmail-connect-btn');
+  if (!btn) return;
+  var connected = gmailAccessToken && gmailTokenExpiry > Date.now();
+  btn.textContent = connected ? '✓ Gmail verbunden' : '☁ Gmail verbinden';
+  btn.style.background = connected ? '#ECFDF5' : '#fff';
+  btn.style.borderColor = connected ? '#6EE7B7' : '#DDDBD6';
+  btn.style.color = connected ? '#059669' : '#666';
+}
+
+function isGmailConnected() {
+  return gmailAccessToken && gmailTokenExpiry > Date.now();
+}
+
+async function createGmailDraft(to, subject, bodyText, pdfBase64, fileName) {
+  if (!isGmailConnected()) {
+    if (confirm('Gmail noch nicht verbunden. Jetzt verbinden?')) gmailAuthorize();
+    return false;
+  }
+
+  var boundary = 'b' + Date.now();
+  // Build MIME parts separately to handle encoding correctly
+  var textPart = '--' + boundary + '\r\n'
+    + 'Content-Type: text/plain; charset="UTF-8"\r\n'
+    + 'Content-Transfer-Encoding: quoted-printable\r\n\r\n'
+    + bodyText + '\r\n';
+
+  var pdfPart = '--' + boundary + '\r\n'
+    + 'Content-Type: application/pdf\r\n'
+    + 'Content-Transfer-Encoding: base64\r\n'
+    + 'Content-Disposition: attachment; filename="' + (fileName||'rechnung.pdf') + '"\r\n\r\n'
+    + pdfBase64.replace(/(.{76})/g, '$1\r\n') + '\r\n';
+
+  var mimeHeader = 'MIME-Version: 1.0\r\n'
+    + 'To: ' + to + '\r\n'
+    + 'Subject: =?UTF-8?B?' + btoa(unescape(encodeURIComponent(subject))) + '?=\r\n'
+    + 'Content-Type: multipart/mixed; boundary="' + boundary + '"\r\n\r\n';
+
+  var fullMime = mimeHeader + textPart + pdfPart + '--' + boundary + '--';
+
+  // Encode as base64url using TextEncoder for proper Unicode handling
+  var bytes = new TextEncoder().encode(fullMime);
+  var binary = '';
+  bytes.forEach(function(b){ binary += String.fromCharCode(b); });
+  var encoded = btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+
+  try {
+    var res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + gmailAccessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ message: { raw: encoded } })
+    });
+    var data = await res.json();
+    if (res.ok) {
+      window.open('https://mail.google.com/mail/u/0/#drafts', '_blank');
+      return true;
+    } else {
+      if (res.status === 401) {
+        sessionStorage.removeItem('gmail_token'); gmailAccessToken = null;
+        if (confirm('Gmail-Verbindung abgelaufen. Neu verbinden?')) gmailAuthorize();
+      } else {
+        alert('Gmail Fehler: ' + (data.error && data.error.message));
+      }
+      return false;
+    }
+  } catch(e) {
+    alert('Fehler: ' + e.message);
+    return false;
+  }
+}
+
+window.onload = async function() {
+  initUsers();
+  checkGmailToken();
+  var loggedIn = await checkSession();
+  if (loggedIn) {
+    updateNavForUser();
+  }
+  // Set dates
+  var now = new Date();
+  var y=now.getFullYear(), m=String(now.getMonth()+1).padStart(2,'0'), d=String(now.getDate()).padStart(2,'0');
+  document.getElementById('inv-date').value = y+'-'+m+'-'+d;
+  var due=new Date(now); due.setDate(due.getDate()+30);
+  document.getElementById('inv-due').value = due.getFullYear()+'-'+String(due.getMonth()+1).padStart(2,'0')+'-'+String(due.getDate()).padStart(2,'0');
+  renderEditor();
+  update();
+  document.querySelectorAll('input,select').forEach(function(el){
+    el.addEventListener('input', update);
+    el.addEventListener('change', update);
+  });
+};
+</script>
+</body>
+</html>
