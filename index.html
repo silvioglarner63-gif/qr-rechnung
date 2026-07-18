@@ -3395,18 +3395,15 @@ function markPaid(ti, i, refYear, refMonth, cbEl) {
     if (md) {
       var net = md.positions.reduce(function(s,p){return s+p.price;},0);
       var total = net*(1+md.mwstRate/100);
-      // Check if due date has passed
-      var dueDate = new Date(refYear, refMonth + i + 1, 0); // last day of invoice month
+      var dueDate = new Date(refYear, refMonth + i + 1, 0);
       var now = new Date();
-      if (dueDate < now) {
-        // Due date passed → move to history immediately
-        paidHistory.unshift({
-          customer: tpl.fields['d-name'], invNr: md.invNr,
-          periode: md.periode, amount: cfmt(total, md.cur),
-          paidKey: key, ti: ti
-        });
-      }
-      // If due date not yet passed: stays visible as green ✓, will move to history later
+      // Always add to history (remove duplicate first)
+      paidHistory = paidHistory.filter(function(h){ return h.paidKey !== key; });
+      paidHistory.unshift({
+        customer: tpl.fields['d-name'], invNr: md.invNr,
+        periode: md.periode, amount: cfmt(total, md.cur),
+        paidKey: key, ti: ti, dueDate: dueDate.getTime()
+      });
     }
   } else {
     paidHistory = paidHistory.filter(function(h){ return h.paidKey !== key; });
@@ -3415,6 +3412,16 @@ function markPaid(ti, i, refYear, refMonth, cbEl) {
   renderWorkflow();
   var panel = document.getElementById('history-panel');
   if (panel.classList.contains('open')) renderHistory();
+}
+
+// Check if a paid card should be hidden (paid AND due date passed)
+function isPaidAndArchived(tpl, monthKey, startYear, startMonthIdx) {
+  if (!tpl.paidMonths || !tpl.paidMonths[monthKey]) return false;
+  // Parse year-month from key e.g. "2026-06"
+  var parts = monthKey.split('-');
+  var y = parseInt(parts[0]), m = parseInt(parts[1]) - 1;
+  var dueDate = new Date(y, m + 1, 0); // last day of that month
+  return dueDate < new Date();
 }
 
 function toggleOneTime(ti) {
@@ -3498,6 +3505,9 @@ function renderWorkflow() {
       }
       var monthKey = startYear + '-' + String(startMonth + i + 1).padStart(2,'0');
       var isPaid = !!tpl.paidMonths[monthKey];
+
+      // If paid AND due date has passed → skip (it's in history)
+      if (isPaidAndArchived(tpl, monthKey, startYear, startMonth)) continue;
       var cbId = 'paid-' + ti + '-' + i;
       // Next month: no dimming, but show a subtle "Bereit" top badge
       var isNext = (i === 1);
