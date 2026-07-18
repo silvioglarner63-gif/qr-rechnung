@@ -3487,14 +3487,15 @@ function renderWorkflow() {
     var curKey = curYear + '-' + String(curMonth + 1).padStart(2,'0');
     var curPaid = !!tpl.paidMonths[curKey];
 
-    // Build 2 cards: current + next
+    // Build 2 cards: always show 2 non-archived months
     var cardsHTML = '<div class="customer-cards">';
     // Use invoice date from template as start month
     var tplDate = tpl.fields['inv-date'] ? new Date(tpl.fields['inv-date']+'T00:00:00') : new Date();
     var startYear = tplDate.getFullYear();
     var startMonth = tplDate.getMonth();
 
-    for (var i = 0; i < 2; i++) {
+    var shownCards = 0;
+    for (var i = 0; shownCards < 2 && i < 24; i++) {
       const d = new Date(startYear, startMonth + i, 1);
       const invDate = fmtDateObj(d);
       const periode = currentPeriode(d);
@@ -3506,11 +3507,13 @@ function renderWorkflow() {
       var monthKey = startYear + '-' + String(startMonth + i + 1).padStart(2,'0');
       var isPaid = !!tpl.paidMonths[monthKey];
 
-      // If paid AND due date has passed → skip (it's in history)
+      // If paid AND due date has passed → skip this card, show next one instead
       if (isPaidAndArchived(tpl, monthKey, startYear, startMonth)) continue;
+
+      shownCards++;
       var cbId = 'paid-' + ti + '-' + i;
       // Next month: no dimming, but show a subtle "Bereit" top badge
-      var isNext = (i === 1);
+      var isNext = (shownCards === 2);
       if (isNext && tpl.oneTime) { cardsHTML += ''; continue; }
       var dueDate = new Date(startYear, startMonth + i + 1, 0); // last day of invoice month
       var isOverdue = !isPaid && dueDate < now;
